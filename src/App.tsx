@@ -5,11 +5,11 @@
  * workbench. Stack: React 18 + TypeScript + Tailwind CSS (v3.3+) + lucide-react.
  *
  * Tailwind setup
- *   - Dark mode is class-based so the in-app theme switch works:
- *       v3: tailwind.config.js → `darkMode: 'class'`
- *       v4: `@custom-variant dark (&:where(.dark, .dark *));`
- *   - Uses only default Tailwind colors (stone, amber, orange, emerald, teal,
- *     yellow, pink, rose, sky) plus a few arbitrary values (e.g. #FDFBF7).
+ *   - Light theme only. Every surface is a solid, standard Tailwind color
+ *     (no translucency, blur or custom color values), and text colors are
+ *     chosen for WCAG AA contrast or better against their backgrounds.
+ *   - Operatory mode is a deliberate full-screen dark display for
+ *     readability across the operatory; it is not a site-wide theme.
  *
  * File layout
  *   1. Schema ............... Procedure types
@@ -18,7 +18,7 @@
  *   4. Clinical engines ..... Pure functions: tooth map, anesthesia, LA dosing,
  *                             AAE endo diagnosis, vitals triage, prophylaxis,
  *                             cementation protocols, denture zones & PIP
- *   5. Design system ........ Warm tokens, primitives, accessible flyout
+ *   5. Design system ........ Warm high-contrast tokens, primitives, flyout
  *   6. SVG diagrams ......... Static schematics + interactive border-molding maps
  *   7. Workbench tools ...... Odontogram, LA calculator, cementation matrix,
  *                             endo wizard, medical risk, denture tools
@@ -60,8 +60,6 @@ import {
   Maximize2,
   Menu,
   Minus,
-  Monitor,
-  Moon,
   Package,
   Pause,
   Play,
@@ -77,7 +75,6 @@ import {
   Star,
   Stethoscope,
   StickyNote,
-  Sun,
   Syringe,
   Timer,
   Trash2,
@@ -99,7 +96,8 @@ export type CategoryId =
   | 'removable'
   | 'implants'
   | 'pediatrics'
-  | 'surgery';
+  | 'surgery'
+  | 'endo';
 
 export interface CdtCode {
   code: string;
@@ -2812,6 +2810,8 @@ const MANUAL_CATEGORY: Record<string, CategoryId> = {
   pediatrics: 'pediatrics',
   perio: 'perio',
   surgery: 'surgery',
+  endo: 'endo',
+  endodontics: 'endo',
   exams: 'exams',
   diagnostics: 'exams',
   diagnostic: 'exams',
@@ -6676,6 +6676,567 @@ NV: {{nv}}`,
   },
 ];
 
+/* -------------------------------------------------------------------------- */
+/* 2g. ENDODONTICS DATASET (manual schema)                                    */
+/*                                                                            */
+/* Embedded from endo-procedures.js (its ENDO_CATEGORY is defined in          */
+/* CATEGORIES instead). Diagnostic testing values are from the source manual; */
+/* all treatment steps, dimensions, file sizes, irrigant concentrations and   */
+/* times are standard references marked "Std ref".                            */
+/* -------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- shared */
+const ENDO_TRAY_COMMON: ManualProcedure['tray'] = [
+  { group: "Isolation", items: ["Rubber dam kit (clamps sized to tooth; winged molar/premolar, #9/#212 anterior)", "Floss ligature", "OraSeal / rubber dam caulk (leak control)"] },
+  { group: "Diagnostics", items: ["Endo-Ice, cotton pellets, EPT", "Radiograph sensor + endodontic film holder (for rubber-dam radiographs)", "Electronic apex locator (EAL)"] },
+  { group: "Access", items: ["High-speed handpiece", "#2 and #4 round carbides (surgical length for molars)", "Safe-ended tapered diamond / Endo-Z", "Endodontic explorer (DG-16)", "Long-shank round burs and ultrasonic tips (calcified orifices)", "Magnification: loupes or microscope"] },
+  { group: "Shaping", items: ["Stainless-steel K-files #06, #08, #10, #15 (scouting / glide path)", "Rotary or reciprocating NiTi system + endodontic motor", "Rubber stops, endo ruler, file organizer", "Chelating lubricant (EDTA gel)"] },
+  { group: "Irrigation", items: ["Sodium hypochlorite (2.5–6%)", "17% EDTA", "Sterile saline", "Luer-lock syringes + 27–30G side-vented needles", "Sonic/ultrasonic activation device"] },
+  { group: "Obturation", items: ["Paper points (matched)", "Gutta-percha cones (matched to final file)", "Sealer (bioceramic or epoxy-resin)", "Spreaders/pluggers or heat source + backfill device"] },
+  { group: "Temporization", items: ["Calcium hydroxide paste (inter-appointment)", "Sterile cotton pellet or PTFE tape", "Cavit (≥ 3–4 mm) ± glass ionomer"] },
+];
+
+const ENDO_ANESTHESIA_BODY = [
+  "Mandibular teeth with irreversible pulpitis: IANB + long buccal; add buccal articaine infiltration; intraosseous or PDL injection if still sensitive; intrapulpal injection as a last resort.",
+  "Maxillary teeth: buccal infiltration ± palatal; posterior superior alveolar or articaine infiltration for molars.",
+  "Confirm anesthesia with a cold test on the tooth before access when possible.",
+];
+
+const ENDO_IRRIGATION_BODY = [
+  "NaOCl 2.5–6% throughout shaping; replenish after every instrument.",
+  "Side-vented 27–30G needle, 1–2 mm short of working length, never binding; gentle pressure, constant movement.",
+  "Final rinse: 17% EDTA ~1 min per canal to remove smear layer → NaOCl; activate (sonic/ultrasonic) about 30 s per canal.",
+  "Never mix chlorhexidine with NaOCl (forms a brown precipitate); if CHX is used as a final rinse, flush with saline between.",
+];
+
+const ENDO_IRRIGATION_WARN =
+  "NaOCl extrusion causes severe pain, swelling and hemorrhage. Prevent: needle loose in the canal, short of WL, low pressure. If it happens: stop, aspirate, reassure, cold compresses, analgesia, consider antibiotics/steroid and referral; document.";
+
+const ENDO_POSTOP = [
+  "Tenderness when biting for a few days is common; avoid chewing on this tooth until it is fully restored.",
+  "Pain relief: ibuprofen 400–600 mg with acetaminophen 500–1000 mg every 6 hours as needed, within daily limits (unless your doctor says otherwise).",
+  "The temporary filling is soft; if it falls out, call us.",
+  "Call for swelling, fever, or pain that gets worse after 2–3 days.",
+  "A root-canal-treated back tooth needs a crown or onlay soon to prevent fracture.",
+];
+
+const ENDO_SHARED_MATRICES: NonNullable<ManualProcedure['matrices']> = [
+  { title: "Pulpal & apical diagnosis (for SOAP)", columns: ["Diagnosis", "Key findings", "Source"], rows: [
+      ["Normal pulp", "Cold ~2 s / 2 s, no linger", "Manual"],
+      ["Reversible pulpitis", "Cold ~0.5 s / 3 s, sharp, no significant linger", "Manual"],
+      ["Symptomatic irreversible pulpitis", "Cold ~0.5 s / ≥ 20 s, lingering; spontaneous/referred pain possible", "Manual"],
+      ["Asymptomatic irreversible pulpitis", "No symptoms; deep caries/trauma will expose pulp", "Manual"],
+      ["Pulp necrosis", "No response to cold or EPT (80)", "Manual"],
+      ["Symptomatic apical periodontitis", "Tender to percussion ± palpation; ± widened PDL", "Manual"],
+      ["Asymptomatic apical periodontitis", "Apical radiolucency, no symptoms", "Manual"],
+      ["Acute / chronic apical abscess", "Swelling and pus / sinus tract", "Manual"],
+    ] },
+  { title: "Irrigation protocol", columns: ["Phase", "Irrigant", "Detail", "Source"], rows: [
+      ["During shaping", "NaOCl 2.5–6%", "After every instrument; side-vented needle 1–2 mm short of WL, not binding", "Std ref"],
+      ["Smear layer", "17% EDTA", "~1 min per canal", "Std ref"],
+      ["Final", "NaOCl", "Activated ~30 s per canal", "Std ref"],
+      ["Optional", "2% CHX", "Only after saline flush (never mixed with NaOCl)", "Std ref"],
+    ] },
+];
+
+const endoSoapCommon = (): ManualSoapField[] => ([
+  { id: "age", label: "Age", type: "text", value: "42" },
+  { id: "sex", label: "Sex", type: "select", options: ["female", "male", "patient"], value: "female" },
+  { id: "mhx", label: "Medical history", type: "text", value: "no changes since last review" },
+  { id: "allergies", label: "Allergies", type: "text", value: "NKDA" },
+  { id: "bp", label: "BP / pulse", type: "text", value: "124/80, 72 bpm" },
+  { id: "pulp_dx", label: "Pulpal diagnosis", type: "select", options: ["Normal pulp", "Reversible pulpitis", "Symptomatic irreversible pulpitis", "Asymptomatic irreversible pulpitis", "Pulp necrosis", "Previously treated", "Previously initiated therapy"], value: "Symptomatic irreversible pulpitis" },
+  { id: "apical_dx", label: "Apical diagnosis", type: "select", options: ["Normal apical tissues", "Symptomatic apical periodontitis", "Asymptomatic apical periodontitis", "Acute apical abscess", "Chronic apical abscess", "Condensing osteitis"], value: "Symptomatic apical periodontitis" },
+  { id: "anesthetic", label: "Anesthetic", type: "select", options: ANESTHETICS, value: ANESTHETICS[0] },
+  { id: "carps", label: "Carpules", type: "text", value: "2" },
+]);
+
+const ENDO_PROCEDURES: ManualProcedure[] = [
+  /* ================================================ VITAL PULP THERAPY */
+  {
+    id: "vital-pulp-therapy",
+    kind: "procedure",
+    title: "Vital Pulp Therapy (Permanent Teeth) — Pulp Cap & Pulpotomy",
+    category: "endo",
+    duration: "~60–90 min",
+    summary:
+      "Preserving a vital pulp in a permanent tooth: selective caries removal with an indirect pulp cap, or — after exposure — direct pulp cap, partial (Cvek) pulpotomy or full pulpotomy, chosen by how deep hemostasis is achieved under NaOCl. Hydraulic calcium silicate (MTA/Biodentine) over the pulp, then an immediate bonded restoration and 6/12-month vitality and radiographic review.",
+    cdt: [
+      { code: "D3120", label: "Pulp cap, indirect (excluding final restoration)" },
+      { code: "D3110", label: "Pulp cap, direct (excluding final restoration)" },
+      { code: "D3220", label: "Therapeutic pulpotomy (excluding final restoration)" },
+      { code: "D3222", label: "Partial pulpotomy for apexogenesis, permanent tooth with incomplete root development" },
+    ],
+    tags: ["vital pulp therapy", "VPT", "indirect pulp cap", "direct pulp cap", "partial pulpotomy", "Cvek", "full pulpotomy", "MTA", "Biodentine", "TheraCal", "calcium silicate", "bioceramic", "hemostasis", "sodium hypochlorite", "selective caries removal", "apexogenesis", "reversible pulpitis", "D3110", "D3120", "D3220", "D3222"],
+    tray: [
+      { group: "Isolation", items: ["Rubber dam kit (required for any exposure)", "Floss ligature"] },
+      { group: "Diagnostics", items: ["Endo-Ice, cotton pellets, EPT", "Radiograph sensor + holder"] },
+      { group: "Rotary", items: ["High-speed handpiece + sterile diamond (pulp amputation, copious water)", "Slow-speed round burs (caries)", "Spoon excavators"] },
+      { group: "Materials", items: ["NaOCl 1.5–6% on sterile cotton pellets", "Hydraulic calcium silicate: MTA (white for anteriors) or Biodentine", "TheraCal LC (indirect pulp cap)", "Glass ionomer / RMGI (protective layer)", "Adhesive + composite for immediate definitive restoration", "Sterile saline"] },
+    ],
+    timers: [
+      { id: "naocl", label: "NaOCl pellet on exposure", seconds: 60, note: "Reassess; hemostasis expected within ~5 min" },
+      { id: "hemo-max", label: "Hemostasis limit", seconds: 300, note: "No hemostasis → go deeper or convert to RCT" },
+      { id: "biodentine", label: "Biodentine initial set", seconds: 720, note: "~12 min before restoring over it" },
+      { id: "theracal", label: "TheraCal LC cure", seconds: 20 },
+    ],
+    steps: [
+      { id: "vp1", title: "Diagnosis & case selection", body: [
+          "Vital pulp confirmed by cold test (and EPT if equivocal) against controls; periapical radiograph.",
+          "Best candidates: normal pulp or reversible pulpitis, no apical pathosis, restorable tooth, cooperative patient.",
+          "Mature teeth with symptomatic irreversible pulpitis may be treated with a full pulpotomy in selected cases; immature teeth benefit most (continued root development).",
+          "Not indicated: necrosis, apical abscess/sinus tract, non-restorable tooth.",
+        ],
+        ebd: "AAE 2021: with careful case selection, a magnified field, NaOCl disinfection and a hydraulic calcium silicate, vital pulp therapy is a predictable alternative to root canal treatment; calcium hydroxide is no longer the material of choice.",
+        checkpoint: "Start check: pulpal and apical diagnosis recorded with controls; VPT indicated; patient consented to possible conversion to RCT." },
+      { id: "vp2", title: "Anesthesia & rubber dam", body: ["Profound anesthesia.", "Rubber dam before any caries removal near the pulp; disinfect the field."] },
+      { id: "vp3", title: "Selective caries removal", body: [
+          "Periphery (DEJ, cavosurface) to hard dentin.",
+          "Deep lesions: leave firm/leathery dentin over the pulp to avoid exposure.",
+          "No exposure → indirect pulp cap: TheraCal LC or calcium silicate over the deepest dentin, then immediate bonded restoration.",
+        ],
+        timers: ["theracal"],
+        checkpoint: "Caries removal review: hard periphery; pulp status (exposed or not) determined." },
+      { id: "vp4", title: "Exposure: assess bleeding", body: [
+          "Irrigate and place a sterile cotton pellet soaked in NaOCl (1.5–6%) on the exposure with light pressure.",
+          "Hemostasis within about 5 min → direct pulp cap (small, clean exposure).",
+          "No hemostasis → partial pulpotomy: remove 2–3 mm of pulp beneath the exposure with a sterile diamond at high speed under copious water, then NaOCl again.",
+          "Still bleeding → full pulpotomy to the canal orifices, then NaOCl again.",
+          "Still bleeding at the orifices → convert to pulpectomy / root canal treatment.",
+        ],
+        timers: ["naocl", "hemo-max"],
+        warn: "Never cap over an uncontrolled bleed or a clot: a blood clot between pulp and capping material predicts failure.",
+        checkpoint: "Hemostasis confirmed at the chosen level before placing the capping material." },
+      { id: "vp5", title: "Place the calcium silicate", body: [
+          "MTA or Biodentine directly on the pulp wound, ~1.5–3 mm thick, adapted without pressure.",
+          "Anterior teeth: white MTA or Biodentine (grey MTA discolors).",
+          "Biodentine: allow ~12 min initial set before restoring over it. MTA: cover with a glass ionomer layer if restoring immediately.",
+        ],
+        timers: ["biodentine"] },
+      { id: "vp6", title: "Immediate definitive restoration", body: [
+          "Glass ionomer/RMGI protective layer as needed, then a bonded composite (or plan full coverage).",
+          "A leak-free coronal seal at the same visit is part of the treatment.",
+        ],
+        checkpoint: "Final review: calcium silicate in place, coronal seal complete, occlusion adjusted." },
+      { id: "vp7", title: "Follow-up", body: [
+          "Recall at 6 and 12 months, then yearly for up to 4 years: symptoms, cold test (may be reduced after full pulpotomy), percussion/palpation, periapical radiograph.",
+          "Immature teeth: confirm continued root development.",
+          "Signs of failure (pain, sinus, apical radiolucency, loss of vitality where expected) → root canal treatment.",
+        ] },
+    ],
+    matrices: [
+      { title: "Choosing the VPT procedure", columns: ["Situation", "Procedure", "CDT", "Source"], rows: [
+          ["Deep caries, no exposure (selective removal)", "Indirect pulp cap (calcium silicate or TheraCal LC)", "D3120", "Std ref"],
+          ["Small exposure, hemostasis ≤ ~5 min", "Direct pulp cap (MTA / Biodentine)", "D3110", "Std ref"],
+          ["Exposure, no hemostasis at surface", "Partial pulpotomy 2–3 mm", "D3220 (D3222 if immature)", "Std ref"],
+          ["No hemostasis after partial pulpotomy", "Full pulpotomy to orifices", "D3220", "Std ref"],
+          ["No hemostasis at orifices", "Pulpectomy / root canal treatment", "D3310–D3330", "Std ref"],
+        ] },
+      { title: "VPT parameters", columns: ["Parameter", "Specification", "Source"], rows: [
+          ["Hemostatic / disinfectant", "NaOCl 1.5–6% on sterile pellet", "Std ref"],
+          ["Hemostasis target", "Within ~5 min", "Std ref"],
+          ["Partial pulpotomy depth", "2–3 mm below exposure", "Std ref"],
+          ["Capping material", "MTA or Biodentine, ~1.5–3 mm", "Std ref"],
+          ["Biodentine initial set", "~12 min", "Std ref"],
+          ["Recall", "6 and 12 months, then yearly up to 4 years", "Std ref"],
+        ] },
+    ],
+    postOp: [
+      "Some sensitivity for a few days is normal.",
+      "Call for lingering or spontaneous pain, swelling, or pain that wakes you at night — the nerve may need root canal treatment.",
+      "Keep your 6- and 12-month check-ups; we test the tooth and take an X-ray.",
+    ],
+    soap: {
+      fields: [
+        ...endoSoapCommon(),
+        { id: "tooth", label: "Tooth", type: "text", value: "#30" },
+        { id: "tests", label: "Pre-op tests", type: "text", value: "cold 0.5 s / 3 s (controls #29, #31 2 s / 2 s); percussion –; palpation –; PA: deep distal caries, no periapical RL" },
+        { id: "block", label: "Injections", type: "text", value: "right IANB, long buccal, buccal articaine infiltration" },
+        { id: "procedure", label: "Procedure", type: "select", options: ["Indirect pulp cap: selective caries removal, firm dentin retained pulpally; TheraCal LC placed and cured 20 s.", "Direct pulp cap: 1 mm exposure; hemostasis with NaOCl pellet in < 5 min; Biodentine placed.", "Partial pulpotomy: 2–3 mm of pulp removed with sterile diamond under water; hemostasis with NaOCl; Biodentine placed.", "Full pulpotomy: coronal pulp removed to orifices; hemostasis with NaOCl; MTA placed and covered with glass ionomer."], value: "Partial pulpotomy: 2–3 mm of pulp removed with sterile diamond under water; hemostasis with NaOCl; Biodentine placed." },
+        { id: "restoration", label: "Restoration", type: "text", value: "Selective enamel etch, Scotchbond Universal, bonded composite restoration placed; occlusion adjusted" },
+        { id: "nv", label: "Next visit", type: "text", value: "6-month VPT review (cold test + PA)" },
+      ],
+      template: `S:
+{{age}} y/o {{sex}} presents for vital pulp therapy {{tooth}}.
+Medical history: {{mhx}}. Allergies: {{allergies}}. BP/pulse: {{bp}}.
+
+O:
+{{tooth}}: {{tests}}.
+
+A:
+{{tooth}}: {{pulp_dx}}; {{apical_dx}}.
+
+P:
+Consent obtained, including possible conversion to root canal treatment.
+Topical 20% benzocaine applied. {{carps}} carpule(s) {{anesthetic}} administered as {{block}}; aspiration negative.
+Rubber dam placed. {{procedure}}
+{{restoration}}.
+Post-op instructions given; signs of pulpal failure reviewed.
+
+NV: {{nv}}`,
+    },
+  },
+
+  /* ================================================ SINGLE-ROOT (ANTERIOR) RCT */
+  {
+    id: "rct-anterior-single-root",
+    kind: "procedure",
+    title: "Root Canal Treatment — Anterior / Single-Rooted Tooth",
+    category: "endo",
+    duration: "~90 min (1–2 visits)",
+    summary:
+      "Nonsurgical RCT of an incisor or canine: lingual access (triangular for maxillary incisors, oval for canines), removal of the lingual shoulder for straight-line access, glide path with #10 K-file, working length by apex locator confirmed on radiograph, NiTi shaping (typical apical size #35–50), NaOCl/EDTA with activation, gutta-percha and sealer obturation, and a bonded coronal seal.",
+    cdt: [
+      { code: "D3310", label: "Endodontic therapy, anterior tooth (excluding final restoration)" },
+      { code: "D3221", label: "Pulpal debridement (emergency, if treatment is staged)" },
+      { code: "D0220", label: "Intraoral periapical, first image" },
+      { code: "D0230", label: "Intraoral periapical, each additional image" },
+    ],
+    tags: ["root canal", "RCT", "endodontic therapy", "anterior", "incisor", "canine", "single canal", "lingual access", "lingual shoulder", "straight-line access", "mandibular incisor two canals", "working length", "apex locator", "glide path", "NiTi", "NaOCl", "EDTA", "gutta-percha", "sealer", "obturation", "D3310"],
+    tray: ENDO_TRAY_COMMON,
+    timers: [
+      { id: "edta", label: "EDTA final rinse", seconds: 60, note: "Per canal" },
+      { id: "activate", label: "Irrigant activation", seconds: 30, note: "Per canal" },
+    ],
+    steps: [
+      { id: "an1", title: "Diagnosis & assessment", body: [
+          "Pulpal and apical diagnosis with controls; pre-op periapical (and a second angle if a second canal is suspected).",
+          "Restorability, periodontal status, crown:root ratio; estimate length from the radiograph.",
+        ],
+        checkpoint: "Start check: diagnosis, restorability and pre-op radiograph reviewed; treatment consented." },
+      { id: "an2", title: "Anesthesia & isolation", body: [...ENDO_ANESTHESIA_BODY.slice(1), "Single-tooth rubber dam; seal leaks."] },
+      { id: "an3", title: "Access", body: [
+          "Remove all caries and leaking restorations first.",
+          "Enter at the center of the lingual surface, bur perpendicular to the lingual surface, then rotate parallel to the long axis once into the chamber.",
+          "Outline: triangular (maxillary incisors, base toward incisal, include pulp horns); oval (canines); narrow oval labiolingually (mandibular incisors).",
+          "Remove the lingual shoulder (dentin bulge) with a safe-ended bur for straight-line access; remove all pulp horn tissue to prevent discoloration.",
+          "Mandibular incisors: search for a second (lingual) canal — present in a substantial minority.",
+        ],
+        checkpoint: "Access review: straight-line access to the canal(s), no pulp horn remnants, no gouging." },
+      { id: "an4", title: "Glide path & working length", body: [
+          "Negotiate with #08/#10 K-files in chelating lubricant, NaOCl in the chamber.",
+          "Coronal flaring with the orifice shaper.",
+          "Working length with the electronic apex locator (reading at the apical foramen, then 0.5–1 mm short), confirmed with a working-length radiograph; record the reference point.",
+        ],
+        checkpoint: "Working length verified by EAL and radiograph; reference point recorded." },
+      { id: "an5", title: "Shape & irrigate", body: [
+          "NiTi to the planned apical size (typically #35–50 for incisors/canines), recapitulating with a #10 to keep patency.",
+          ...ENDO_IRRIGATION_BODY,
+        ],
+        warn: ENDO_IRRIGATION_WARN,
+        timers: ["edta", "activate"] },
+      { id: "an6", title: "Obturate (or medicate)", body: [
+          "Two-visit: dry, calcium hydroxide paste, sterile pellet or PTFE, ≥ 3–4 mm Cavit.",
+          "Obturation: dry with paper points; master cone to WL with tug-back; confirm on radiograph.",
+          "Sealer + gutta-percha (single-cone with bioceramic sealer, or lateral / warm vertical condensation).",
+          "Sear off gutta-percha ~1–2 mm below the CEJ (below the gingival level anteriorly to avoid discoloration); condense.",
+        ],
+        checkpoint: "Master-cone and final radiographs: dense fill to WL, no voids, appropriate taper." },
+      { id: "an7", title: "Coronal seal", body: [
+          "Clean sealer from the chamber (alcohol).",
+          "Bonded composite restoration (or orifice barrier + core for a crown). Intact anteriors usually do not need a crown.",
+          "Adjust occlusion if percussion-sensitive pre-op.",
+        ],
+        ebd: "Coronal leakage is a leading cause of endodontic failure; place the definitive bonded restoration as soon as possible. ADA 2019: antibiotics are not indicated for pulpitis or localized apical periodontitis without systemic signs.",
+        checkpoint: "Final review: final radiograph, coronal seal, occlusion; recall scheduled." },
+    ],
+    matrices: [
+      { title: "Anterior anatomy (averages)", columns: ["Tooth", "Avg length", "Canals", "Access outline", "Source"], rows: [
+          ["Max central incisor", "~23.5 mm", "1", "Triangular", "Std ref"],
+          ["Max lateral incisor", "~22 mm", "1", "Triangular to oval", "Std ref"],
+          ["Max canine", "~27 mm", "1", "Oval", "Std ref"],
+          ["Mand central incisor", "~21 mm", "1, often 2 (labial + lingual)", "Narrow oval", "Std ref"],
+          ["Mand lateral incisor", "~22.5 mm", "1, often 2", "Narrow oval", "Std ref"],
+          ["Mand canine", "~27 mm", "1 (occasionally 2)", "Oval", "Std ref"],
+        ] },
+      { title: "Shaping targets", columns: ["Parameter", "Specification", "Source"], rows: [
+          ["Working length", "EAL reading, 0.5–1 mm short of foramen; radiographic confirmation", "Std ref"],
+          ["Glide path", "#10 K-file to WL", "Std ref"],
+          ["Apical size (typical)", "#35–50", "Std ref"],
+          ["Temporary", "≥ 3–4 mm Cavit over pellet/PTFE", "Std ref"],
+        ] },
+      ...ENDO_SHARED_MATRICES,
+    ],
+    postOp: ENDO_POSTOP.filter((_, i) => i !== 4).concat(["Front teeth usually need only a bonded filling, but may darken over time; tell us if you notice color change."]),
+    soap: {
+      fields: [
+        ...endoSoapCommon(),
+        { id: "tooth", label: "Tooth", type: "text", value: "#8" },
+        { id: "tests", label: "Pre-op tests", type: "text", value: "cold NR (controls #7, #9 2 s / 2 s); EPT 80; percussion ++; palpation +; PA: periapical RL" },
+        { id: "block", label: "Injections", type: "text", value: "buccal infiltration above #8 and nasopalatine" },
+        { id: "canals", label: "Canal(s) / WL / reference", type: "text", value: "single canal, WL 22.5 mm, incisal edge" },
+        { id: "maf", label: "Final apical size / taper", type: "text", value: "#40 / .04" },
+        { id: "visits", label: "Visit", type: "select", options: ["Single visit: obturated today.", "Visit 1: cleaned and shaped; calcium hydroxide placed; Cavit temporary.", "Visit 2: calcium hydroxide removed; obturated today."], value: "Single visit: obturated today." },
+        { id: "obturation", label: "Obturation", type: "text", value: "bioceramic sealer, single-cone gutta-percha; seared 2 mm below CEJ" },
+        { id: "restoration", label: "Coronal seal", type: "text", value: "bonded composite restoration of access" },
+        { id: "nv", label: "Next visit", type: "text", value: "Endo recall 6–12 months with PA" },
+      ],
+      template: `S:
+{{age}} y/o {{sex}} presents for root canal treatment {{tooth}}.
+Medical history: {{mhx}}. Allergies: {{allergies}}. BP/pulse: {{bp}}.
+
+O:
+{{tooth}}: {{tests}}.
+
+A:
+{{tooth}}: {{pulp_dx}}; {{apical_dx}}.
+
+P:
+Consent obtained. Topical 20% benzocaine applied. {{carps}} carpule(s) {{anesthetic}} administered as {{block}}; aspiration negative.
+Rubber dam isolation. Caries removed; lingual access with straight-line access to the canal.
+Glide path with #10 K-file. Working length by apex locator, confirmed radiographically: {{canals}}.
+Cleaned and shaped to {{maf}} with NaOCl irrigation; final EDTA and activated NaOCl rinse.
+{{visits}} Obturation: {{obturation}}. Final radiograph taken.
+{{restoration}}. Occlusion checked.
+Post-op instructions and analgesic regimen given.
+
+NV: {{nv}}`,
+    },
+  },
+
+  /* ================================================ PREMOLAR RCT */
+  {
+    id: "rct-premolar",
+    kind: "procedure",
+    title: "Root Canal Treatment — Premolar",
+    category: "endo",
+    duration: "~90–120 min (1–2 visits)",
+    summary:
+      "Nonsurgical RCT of a premolar: bucco-lingually oval occlusal access (mandibular premolars placed slightly buccal because of crown tilt), systematic search for a second canal, glide path, apex-locator working length confirmed radiographically, NiTi shaping (typical apical size #25–40), NaOCl/EDTA with activation, obturation, and a core with planned cuspal coverage.",
+    cdt: [
+      { code: "D3320", label: "Endodontic therapy, premolar tooth (excluding final restoration)" },
+      { code: "D3221", label: "Pulpal debridement (emergency, if treatment is staged)" },
+      { code: "D2950", label: "Core buildup (if indicated)" },
+      { code: "D0220", label: "Intraoral periapical, first image" },
+      { code: "D0230", label: "Intraoral periapical, each additional image" },
+    ],
+    tags: ["root canal", "RCT", "premolar", "bicuspid", "maxillary first premolar two canals", "mandibular premolar complex anatomy", "oval access", "second canal", "angled radiograph", "SLOB", "working length", "apex locator", "NiTi", "NaOCl", "EDTA", "obturation", "cuspal coverage", "D3320"],
+    tray: ENDO_TRAY_COMMON,
+    timers: [
+      { id: "edta", label: "EDTA final rinse", seconds: 60, note: "Per canal" },
+      { id: "activate", label: "Irrigant activation", seconds: 30, note: "Per canal" },
+    ],
+    steps: [
+      { id: "pm1", title: "Diagnosis & assessment", body: [
+          "Diagnosis with controls; straight and mesial- or distal-angled periapicals to separate buccal and lingual roots (SLOB rule).",
+          "Look for a sudden narrowing or disappearance of the canal on the radiograph — it signals a split into two canals.",
+        ],
+        checkpoint: "Start check: diagnosis, restorability, anatomy expectations and pre-op radiographs reviewed; consent obtained." },
+      { id: "pm2", title: "Anesthesia & isolation", body: [...ENDO_ANESTHESIA_BODY, "Rubber dam; pre-endo buildup first if walls are missing."] },
+      { id: "pm3", title: "Access", body: [
+          "Remove caries and restorations.",
+          "Oval outline, wider buccolingually than mesiodistally, centered on the central groove.",
+          "Mandibular premolars: start slightly buccal to the central groove and angle the bur along the long axis (crown tilts lingually).",
+          "Maxillary first premolar: expect buccal and palatal canals; maxillary second premolar: one or two.",
+          "Mandibular premolars: usually one canal, but look for a lingual split in the first premolar.",
+        ],
+        checkpoint: "Access review: all orifices located, straight-line access, no perforation risk toward the crown's lingual tilt." },
+      { id: "pm4", title: "Glide path & working length", body: [
+          "#08/#10 K-files with lubricant; orifice shaping.",
+          "EAL working length for each canal, confirmed on an angled radiograph with files in place; record reference cusps.",
+        ],
+        checkpoint: "Working lengths verified by EAL and radiograph for every canal." },
+      { id: "pm5", title: "Shape & irrigate", body: [
+          "NiTi to the planned apical size (typically #25–40), maintaining patency.",
+          ...ENDO_IRRIGATION_BODY,
+        ],
+        warn: ENDO_IRRIGATION_WARN,
+        timers: ["edta", "activate"] },
+      { id: "pm6", title: "Obturate (or medicate)", body: [
+          "Two-visit: calcium hydroxide, pellet/PTFE, ≥ 3–4 mm Cavit.",
+          "Master cones to WL with tug-back; radiograph.",
+          "Sealer + gutta-percha; remove to the orifices; condense.",
+        ],
+        checkpoint: "Master-cone and final radiographs: each canal filled to WL without voids." },
+      { id: "pm7", title: "Core & cuspal coverage", body: [
+          "Bonded core (orifice barrier) at the same visit.",
+          "Plan an onlay or crown: premolars with lost marginal ridges fracture without cuspal protection.",
+          "Reduce occlusion if percussion-sensitive pre-op.",
+        ],
+        ebd: "Endodontically treated posterior teeth show markedly better long-term survival with cuspal coverage; place it promptly after obturation.",
+        checkpoint: "Final review: coronal seal, occlusion, cuspal-coverage plan and recall scheduled." },
+    ],
+    matrices: [
+      { title: "Premolar anatomy (averages)", columns: ["Tooth", "Avg length", "Canals (typical)", "Source"], rows: [
+          ["Max 1st premolar", "~22.5 mm", "2 (buccal + palatal) in most; occasionally 3", "Std ref"],
+          ["Max 2nd premolar", "~22.5 mm", "1 or 2 (roughly equal)", "Std ref"],
+          ["Mand 1st premolar", "~22.5 mm", "1 in most; ~¼ with 2 or complex anatomy", "Std ref"],
+          ["Mand 2nd premolar", "~22.5 mm", "1 in most", "Std ref"],
+        ] },
+      { title: "Shaping targets", columns: ["Parameter", "Specification", "Source"], rows: [
+          ["Working length", "EAL, 0.5–1 mm short of foramen; angled radiograph", "Std ref"],
+          ["Apical size (typical)", "#25–40", "Std ref"],
+          ["Access", "Bucco-lingual oval; mandibular slightly buccal", "Std ref"],
+        ] },
+      ...ENDO_SHARED_MATRICES,
+    ],
+    postOp: ENDO_POSTOP,
+    soap: {
+      fields: [
+        ...endoSoapCommon(),
+        { id: "tooth", label: "Tooth", type: "text", value: "#5" },
+        { id: "tests", label: "Pre-op tests", type: "text", value: "cold 0.5 s / 25 s (controls #4, #12 2 s / 2 s); percussion +; palpation –; PA: widened apical PDL" },
+        { id: "block", label: "Injections", type: "text", value: "buccal infiltration above #5 and palatal infiltration" },
+        { id: "canals", label: "Canals / WL / reference", type: "text", value: "B 21.0 mm, P 21.5 mm, buccal cusp" },
+        { id: "maf", label: "Final apical size / taper", type: "text", value: "#30 / .04 both canals" },
+        { id: "visits", label: "Visit", type: "select", options: ["Single visit: obturated today.", "Visit 1: cleaned and shaped; calcium hydroxide placed; Cavit temporary.", "Visit 2: calcium hydroxide removed; obturated today."], value: "Single visit: obturated today." },
+        { id: "obturation", label: "Obturation", type: "text", value: "bioceramic sealer, single-cone gutta-percha, removed to orifices" },
+        { id: "restoration", label: "Coronal seal", type: "text", value: "orifice barrier and bonded composite core; crown planned" },
+        { id: "nv", label: "Next visit", type: "text", value: "#5 crown preparation" },
+      ],
+      template: `S:
+{{age}} y/o {{sex}} presents for root canal treatment {{tooth}}.
+Medical history: {{mhx}}. Allergies: {{allergies}}. BP/pulse: {{bp}}.
+
+O:
+{{tooth}}: {{tests}}.
+
+A:
+{{tooth}}: {{pulp_dx}}; {{apical_dx}}.
+
+P:
+Consent obtained. Topical 20% benzocaine applied. {{carps}} carpule(s) {{anesthetic}} administered as {{block}}; aspiration negative.
+Rubber dam isolation. Caries removed; oval occlusal access; all orifices located.
+Glide path established. Working lengths by apex locator, confirmed on angled radiograph: {{canals}}.
+Cleaned and shaped to {{maf}} with NaOCl irrigation; final EDTA and activated NaOCl rinse.
+{{visits}} Obturation: {{obturation}}. Final radiograph taken.
+Coronal seal: {{restoration}}. Occlusion checked.
+Post-op instructions and analgesic regimen given; need for cuspal coverage explained.
+
+NV: {{nv}}`,
+    },
+  },
+
+  /* ================================================ MOLAR RCT */
+  {
+    id: "rct-molar",
+    kind: "procedure",
+    title: "Root Canal Treatment — Molar",
+    category: "endo",
+    duration: "~2–3 h (often 2 visits)",
+    summary:
+      "Nonsurgical RCT of a multi-rooted molar: pre-endo buildup for isolation, rhomboid/trapezoid access guided by the laws of chamber anatomy, magnified search for MB2 (maxillary) or DL/middle mesial canals (mandibular), glide path in curved canals, individual working lengths by apex locator and angled radiograph, heat-treated NiTi shaping, activated NaOCl/EDTA irrigation, obturation, and a bonded core with prompt cuspal coverage.",
+    cdt: [
+      { code: "D3330", label: "Endodontic therapy, molar tooth (excluding final restoration)" },
+      { code: "D3221", label: "Pulpal debridement (emergency, if treatment is staged)" },
+      { code: "D2950", label: "Core buildup (if indicated)" },
+      { code: "D0220", label: "Intraoral periapical, first image" },
+      { code: "D0230", label: "Intraoral periapical, each additional image" },
+    ],
+    tags: ["root canal", "RCT", "molar", "MB2", "second mesiobuccal canal", "distolingual canal", "middle mesial", "C-shaped", "laws of symmetry", "pre-endo buildup", "access", "calcified canals", "curved canals", "glide path", "heat-treated NiTi", "working length", "apex locator", "NaOCl", "EDTA", "ultrasonic activation", "obturation", "cuspal coverage", "D3330"],
+    tray: ENDO_TRAY_COMMON,
+    timers: [
+      { id: "edta", label: "EDTA final rinse", seconds: 60, note: "Per canal" },
+      { id: "activate", label: "Irrigant activation", seconds: 30, note: "Per canal" },
+    ],
+    steps: [
+      { id: "mo1", title: "Diagnosis & assessment", body: [
+          "Diagnosis with controls; straight and angled periapicals; CBCT when anatomy, resorption or a missed canal is suspected.",
+          "Restorability (ferrule for the future crown), periodontal status, furcation, access limits (mouth opening), curvatures.",
+          "Complex cases (severe curvature, calcification, retreatment) → consider referral.",
+        ],
+        checkpoint: "Start check: diagnosis, restorability, anatomy and difficulty assessed; consent including cuspal coverage cost." },
+      { id: "mo2", title: "Anesthesia, buildup & isolation", body: [
+          ...ENDO_ANESTHESIA_BODY,
+          "Pre-endodontic buildup of missing walls so the tooth holds a clamp, a leak-free dam and irrigant.",
+          "Rubber dam (winged molar clamp); seal leaks.",
+        ],
+        warn: "Mandibular molars with irreversible pulpitis often need supplemental anesthesia; do not start access until the tooth is profoundly numb." },
+      { id: "mo3", title: "Access & orifice location", body: [
+          "Remove caries and restorations. Outline in the mesial part of the crown, never through the distal marginal ridge unnecessarily.",
+          "Maxillary molar: rhomboid/trapezoid outline covering MB, DB and palatal orifices; search for MB2 along the MB–palatal line, just palatal and slightly mesial to MB, under magnification (troughing with ultrasonic tips).",
+          "Mandibular molar: trapezoid outline wider mesially; MB and ML orifices mesially, D (or DB + DL) distally; look for a middle mesial canal between MB and ML.",
+          "Use chamber anatomy: the floor is darker than the walls; orifices sit at the junction of walls and floor, at the ends of the dark developmental grooves, and symmetrically placed (laws of centrality, concentricity, color change, symmetry, orifice location).",
+          "Watch for C-shaped canals in mandibular second molars.",
+        ],
+        checkpoint: "Access review: all expected orifices located (including MB2 search), straight-line access, floor intact." },
+      { id: "mo4", title: "Glide path & working length", body: [
+          "Pre-curved #08/#10 K-files with lubricant; establish a reproducible glide path before NiTi.",
+          "Coronal flaring with orifice shapers to reduce curvature stress.",
+          "EAL working length for every canal, confirmed on an angled radiograph; record reference cusps (e.g., MB cusp for MB canal).",
+        ],
+        checkpoint: "Working lengths verified for every canal (EAL + radiograph); no ledges." },
+      { id: "mo5", title: "Shape & irrigate", body: [
+          "Heat-treated NiTi to the planned apical size (typically #25–30 with .04–.06 taper in curved molar canals), recapitulating and maintaining patency.",
+          "Never force a file; inspect and discard files at signs of unwinding.",
+          ...ENDO_IRRIGATION_BODY,
+        ],
+        warn: `${ENDO_IRRIGATION_WARN} File separation: stop, radiograph, inform the patient, and consult/refer.`,
+        timers: ["edta", "activate"] },
+      { id: "mo6", title: "Obturate (or medicate)", body: [
+          "Two-visit (common in necrosis/abscess or long appointments): calcium hydroxide in every canal, pellet/PTFE, ≥ 3–4 mm Cavit.",
+          "Master cones to WL with tug-back in every canal; radiograph.",
+          "Sealer + gutta-percha (bioceramic single-cone, lateral or warm vertical); remove to orifices; condense.",
+        ],
+        checkpoint: "Master-cone and final radiographs: every canal filled to WL without voids." },
+      { id: "mo7", title: "Core & cuspal coverage", body: [
+          "Orifice barrier and bonded composite core at the obturation visit.",
+          "Plan a crown or onlay promptly; reduce occlusion meanwhile if cusps are unsupported or the tooth was percussion-sensitive.",
+          "Posts are rarely needed in molars; the chamber provides retention.",
+        ],
+        ebd: "Molars restored with cuspal coverage after RCT have substantially higher survival than those with intracoronal restorations alone; delays increase fracture and leakage.",
+        checkpoint: "Final review: coronal seal, occlusion, crown plan and recall scheduled." },
+    ],
+    matrices: [
+      { title: "Molar anatomy (averages)", columns: ["Tooth", "Avg length", "Canals (typical)", "Access", "Source"], rows: [
+          ["Max 1st molar", "~20.5 mm (palatal often longest)", "MB, DB, P + MB2 in the majority when searched with magnification", "Rhomboid / trapezoid, mesial half", "Std ref"],
+          ["Max 2nd molar", "~20 mm", "MB, DB, P; MB2 less often; roots may be fused", "Narrower triangle", "Std ref"],
+          ["Mand 1st molar", "~21 mm", "MB, ML, D; DL in about a quarter; occasional middle mesial", "Trapezoid, wider mesially", "Std ref"],
+          ["Mand 2nd molar", "~20 mm", "MB, ML, D; C-shaped in some populations", "Trapezoid", "Std ref"],
+        ] },
+      { title: "Laws of chamber anatomy", columns: ["Law", "Rule", "Source"], rows: [
+          ["Centrality", "Chamber floor is centered at the CEJ level", "Std ref"],
+          ["Concentricity", "Chamber walls mirror the external crown contour at the CEJ", "Std ref"],
+          ["Color change", "Floor is darker than the walls", "Std ref"],
+          ["Symmetry", "Orifices are equidistant from a line through the floor (except maxillary molars)", "Std ref"],
+          ["Orifice location", "Orifices lie at the wall–floor junction, at the ends of developmental grooves", "Std ref"],
+        ] },
+      { title: "Shaping targets", columns: ["Parameter", "Specification", "Source"], rows: [
+          ["Working length", "EAL, 0.5–1 mm short of foramen; angled radiograph", "Std ref"],
+          ["Glide path", "Pre-curved #08/#10 K-files", "Std ref"],
+          ["Apical size (curved canals)", "#25–30, .04–.06 taper", "Std ref"],
+          ["Temporary", "≥ 3–4 mm Cavit over pellet/PTFE", "Std ref"],
+        ] },
+      ...ENDO_SHARED_MATRICES,
+    ],
+    postOp: ENDO_POSTOP,
+    soap: {
+      fields: [
+        ...endoSoapCommon(),
+        { id: "tooth", label: "Tooth", type: "text", value: "#3" },
+        { id: "tests", label: "Pre-op tests", type: "text", value: "cold 0.5 s / 30 s (controls #2, #14 2 s / 2 s); percussion ++; palpation –; probing ≤ 3 mm; mobility 0; PA: widened PDL MB root" },
+        { id: "block", label: "Injections", type: "text", value: "buccal infiltration (articaine) above #3 and palatal infiltration" },
+        { id: "canals", label: "Canals / WL / reference", type: "text", value: "MB 20.0, MB2 19.5, DB 19.5, P 21.0 mm; reference MB, DB and P cusps" },
+        { id: "maf", label: "Final apical size / taper", type: "text", value: "MB/MB2/DB #25 / .06, P #35 / .04" },
+        { id: "visits", label: "Visit", type: "select", options: ["Single visit: obturated today.", "Visit 1: cleaned and shaped; calcium hydroxide placed; Cavit temporary.", "Visit 2: calcium hydroxide removed; obturated today."], value: "Single visit: obturated today." },
+        { id: "obturation", label: "Obturation", type: "text", value: "bioceramic sealer, single-cone gutta-percha, removed to orifices" },
+        { id: "restoration", label: "Coronal seal", type: "text", value: "orifice barriers and bonded composite core; occlusion reduced; crown planned" },
+        { id: "nv", label: "Next visit", type: "text", value: "#3 crown preparation" },
+      ],
+      template: `S:
+{{age}} y/o {{sex}} presents for root canal treatment {{tooth}}.
+Medical history: {{mhx}}. Allergies: {{allergies}}. BP/pulse: {{bp}}.
+
+O:
+{{tooth}}: {{tests}}.
+
+A:
+{{tooth}}: {{pulp_dx}}; {{apical_dx}}.
+
+P:
+Consent obtained. Topical 20% benzocaine applied. {{carps}} carpule(s) {{anesthetic}} administered as {{block}}; aspiration negative; profound anesthesia confirmed.
+Pre-endodontic buildup as needed; rubber dam isolation. Access completed; orifices located under magnification including search for additional canals.
+Glide path with pre-curved K-files. Working lengths by apex locator, confirmed on angled radiograph: {{canals}}.
+Cleaned and shaped to {{maf}} with NaOCl irrigation; final EDTA and activated NaOCl rinse.
+{{visits}} Obturation: {{obturation}}. Final radiograph taken.
+Coronal seal: {{restoration}}.
+Post-op instructions and analgesic regimen given; importance of prompt cuspal coverage explained.
+
+NV: {{nv}}`,
+    },
+  },
+];
+
 export const proceduresData: Procedure[] = [
   // Restorative dataset: all entries filed under Restorative (including PRR and occlusal guard).
   ...RESTORATIVE_PROCEDURES.map((m) => normalizeManualProcedure(m, 'restorative')),
@@ -6687,6 +7248,8 @@ export const proceduresData: Procedure[] = [
   ...PEDS_DIAGNOSTIC_PROCEDURES.map((m) => normalizeManualProcedure(m)),
   // Oral surgery dataset.
   ...ORAL_SURGERY_PROCEDURES.map((m) => normalizeManualProcedure(m)),
+  // Endodontics dataset.
+  ...ENDO_PROCEDURES.map((m) => normalizeManualProcedure(m)),
   // One-visit e.max summary (prep + IDS + impression + provisional), kept alongside the visit-by-visit entries.
   emaxCrown,
 ];
@@ -6696,12 +7259,13 @@ export const proceduresData: Procedure[] = [
 /* 3. UTILITIES & HOOKS                                                       */
 /* ========================================================================== */
 
-type AccentKey = 'honey' | 'eucalyptus' | 'sage' | 'terracotta' | 'cocoa' | 'brass' | 'blossom' | 'plum';
+type AccentKey = 'honey' | 'eucalyptus' | 'sage' | 'terracotta' | 'cocoa' | 'brass' | 'blossom' | 'plum' | 'ember';
 
 const CATEGORIES: { id: CategoryId; label: string; icon: LucideIcon; accent: AccentKey }[] = [
   { id: 'exams', label: 'Diagnostics/Exams', icon: Stethoscope, accent: 'honey' },
   { id: 'perio', label: 'Periodontics', icon: Activity, accent: 'eucalyptus' },
   { id: 'restorative', label: 'Restorative', icon: Layers, accent: 'sage' },
+  { id: 'endo', label: 'Endodontics', icon: Zap, accent: 'ember' },
   { id: 'fixed', label: 'Fixed Prosth', icon: Crown, accent: 'terracotta' },
   { id: 'removable', label: 'Removable Prosth', icon: Smile, accent: 'cocoa' },
   { id: 'implants', label: 'Implants & Digital', icon: ScanLine, accent: 'brass' },
@@ -6726,91 +7290,99 @@ interface AccentStyle {
 /** Full literal class strings so Tailwind can see every class. */
 const ACCENT: Record<AccentKey, AccentStyle> = {
   honey: {
-    badge: 'bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
-    solid: 'bg-amber-600 text-white ring-amber-600 dark:bg-amber-500 dark:text-stone-950 dark:ring-amber-500',
-    dot: 'bg-amber-500',
-    text: 'text-amber-700 dark:text-amber-300',
-    soft: 'border-amber-500 bg-amber-50/70 dark:bg-amber-500/10',
-    icon: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
+    badge: 'bg-amber-50 text-amber-800 ring-amber-600/20',
+    solid: 'bg-amber-700 text-white ring-amber-600',
+    dot: 'bg-amber-700',
+    text: 'text-amber-700',
+    soft: 'border-amber-500 bg-amber-50',
+    icon: 'bg-amber-100 text-amber-800',
   },
   eucalyptus: {
-    badge: 'bg-teal-50 text-teal-800 ring-teal-700/20 dark:bg-teal-500/10 dark:text-teal-300 dark:ring-teal-400/20',
-    solid: 'bg-teal-800 text-white ring-teal-800 dark:bg-teal-500 dark:text-stone-950 dark:ring-teal-500',
+    badge: 'bg-teal-50 text-teal-800 ring-teal-700/20',
+    solid: 'bg-teal-800 text-white ring-teal-800',
     dot: 'bg-teal-600',
-    text: 'text-teal-800 dark:text-teal-300',
-    soft: 'border-teal-600 bg-teal-50/70 dark:bg-teal-500/10',
-    icon: 'bg-teal-100 text-teal-800 dark:bg-teal-500/15 dark:text-teal-300',
+    text: 'text-teal-800',
+    soft: 'border-teal-600 bg-teal-50',
+    icon: 'bg-teal-100 text-teal-800',
   },
   sage: {
-    badge: 'bg-emerald-50 text-emerald-800 ring-emerald-700/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
-    solid: 'bg-emerald-700 text-white ring-emerald-700 dark:bg-emerald-500 dark:text-stone-950 dark:ring-emerald-500',
+    badge: 'bg-emerald-50 text-emerald-800 ring-emerald-700/20',
+    solid: 'bg-emerald-700 text-white ring-emerald-700',
     dot: 'bg-emerald-600',
-    text: 'text-emerald-800 dark:text-emerald-300',
-    soft: 'border-emerald-600 bg-emerald-50/70 dark:bg-emerald-500/10',
-    icon: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+    text: 'text-emerald-800',
+    soft: 'border-emerald-600 bg-emerald-50',
+    icon: 'bg-emerald-100 text-emerald-800',
   },
   terracotta: {
-    badge: 'bg-orange-50 text-orange-800 ring-orange-700/20 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-400/20',
-    solid: 'bg-orange-700 text-white ring-orange-700 dark:bg-orange-500 dark:text-stone-950 dark:ring-orange-500',
+    badge: 'bg-orange-50 text-orange-800 ring-orange-700/20',
+    solid: 'bg-orange-700 text-white ring-orange-700',
     dot: 'bg-orange-600',
-    text: 'text-orange-800 dark:text-orange-300',
-    soft: 'border-orange-600 bg-orange-50/70 dark:bg-orange-500/10',
-    icon: 'bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-300',
+    text: 'text-orange-800',
+    soft: 'border-orange-600 bg-orange-50',
+    icon: 'bg-orange-100 text-orange-800',
   },
   cocoa: {
-    badge: 'bg-stone-100 text-stone-800 ring-stone-600/20 dark:bg-stone-500/15 dark:text-stone-200 dark:ring-stone-400/20',
-    solid: 'bg-stone-700 text-white ring-stone-700 dark:bg-stone-300 dark:text-stone-950 dark:ring-stone-300',
+    badge: 'bg-stone-100 text-stone-800 ring-stone-600/20',
+    solid: 'bg-stone-700 text-white ring-stone-700',
     dot: 'bg-stone-500',
-    text: 'text-stone-700 dark:text-stone-300',
-    soft: 'border-stone-500 bg-stone-100/80 dark:bg-stone-500/10',
-    icon: 'bg-stone-200 text-stone-800 dark:bg-stone-500/20 dark:text-stone-200',
+    text: 'text-stone-700',
+    soft: 'border-stone-500 bg-stone-100',
+    icon: 'bg-stone-200 text-stone-800',
   },
   brass: {
-    badge: 'bg-yellow-50 text-yellow-800 ring-yellow-700/20 dark:bg-yellow-500/10 dark:text-yellow-300 dark:ring-yellow-400/20',
-    solid: 'bg-yellow-700 text-white ring-yellow-700 dark:bg-yellow-500 dark:text-stone-950 dark:ring-yellow-500',
+    badge: 'bg-yellow-50 text-yellow-800 ring-yellow-700/20',
+    solid: 'bg-yellow-700 text-white ring-yellow-700',
     dot: 'bg-yellow-600',
-    text: 'text-yellow-800 dark:text-yellow-300',
-    soft: 'border-yellow-600 bg-yellow-50/70 dark:bg-yellow-500/10',
-    icon: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-500/15 dark:text-yellow-300',
+    text: 'text-yellow-800',
+    soft: 'border-yellow-600 bg-yellow-50',
+    icon: 'bg-yellow-100 text-yellow-800',
   },
   blossom: {
-    badge: 'bg-pink-50 text-pink-800 ring-pink-700/20 dark:bg-pink-500/10 dark:text-pink-300 dark:ring-pink-400/20',
-    solid: 'bg-pink-700 text-white ring-pink-700 dark:bg-pink-400 dark:text-stone-950 dark:ring-pink-400',
+    badge: 'bg-pink-50 text-pink-800 ring-pink-700/20',
+    solid: 'bg-pink-700 text-white ring-pink-700',
     dot: 'bg-pink-500',
-    text: 'text-pink-800 dark:text-pink-300',
-    soft: 'border-pink-500 bg-pink-50/70 dark:bg-pink-500/10',
-    icon: 'bg-pink-100 text-pink-800 dark:bg-pink-500/15 dark:text-pink-300',
+    text: 'text-pink-800',
+    soft: 'border-pink-500 bg-pink-50',
+    icon: 'bg-pink-100 text-pink-800',
+  },
+  ember: {
+    badge: 'bg-red-50 text-red-900 ring-red-800/20',
+    solid: 'bg-red-800 text-white ring-red-800',
+    dot: 'bg-red-700',
+    text: 'text-red-900',
+    soft: 'border-red-700 bg-red-50',
+    icon: 'bg-red-100 text-red-900',
   },
   plum: {
-    badge: 'bg-rose-50 text-rose-900 ring-rose-800/20 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-400/20',
-    solid: 'bg-rose-800 text-white ring-rose-800 dark:bg-rose-400 dark:text-stone-950 dark:ring-rose-400',
+    badge: 'bg-rose-50 text-rose-900 ring-rose-800/20',
+    solid: 'bg-rose-800 text-white ring-rose-800',
     dot: 'bg-rose-700',
-    text: 'text-rose-900 dark:text-rose-300',
-    soft: 'border-rose-700 bg-rose-50/70 dark:bg-rose-500/10',
-    icon: 'bg-rose-100 text-rose-900 dark:bg-rose-500/15 dark:text-rose-300',
+    text: 'text-rose-900',
+    soft: 'border-rose-700 bg-rose-50',
+    icon: 'bg-rose-100 text-rose-900',
   },
 };
 
 const TONE: Record<TimerTone, { label: string; ring: string; badge: string }> = {
   etch: {
     label: 'Etch / condition',
-    ring: 'stroke-orange-600 dark:stroke-orange-400',
-    badge: 'bg-orange-50 text-orange-800 ring-orange-700/20 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-400/20',
+    ring: 'stroke-orange-600',
+    badge: 'bg-orange-50 text-orange-800 ring-orange-700/20',
   },
   prime: {
     label: 'Prime / bond',
-    ring: 'stroke-emerald-600 dark:stroke-emerald-400',
-    badge: 'bg-emerald-50 text-emerald-800 ring-emerald-700/20 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
+    ring: 'stroke-emerald-600',
+    badge: 'bg-emerald-50 text-emerald-800 ring-emerald-700/20',
   },
   cure: {
     label: 'Light cure',
-    ring: 'stroke-amber-500 dark:stroke-amber-400',
-    badge: 'bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
+    ring: 'stroke-amber-500',
+    badge: 'bg-amber-50 text-amber-800 ring-amber-600/20',
   },
   set: {
     label: 'Set / dwell',
-    ring: 'stroke-stone-500 dark:stroke-stone-300',
-    badge: 'bg-stone-100 text-stone-700 ring-stone-500/20 dark:bg-stone-500/15 dark:text-stone-300 dark:ring-stone-400/20',
+    ring: 'stroke-stone-500',
+    badge: 'bg-stone-100 text-stone-700 ring-stone-500/20',
   },
 };
 
@@ -7083,35 +7655,6 @@ function useLocalStorage<T>(key: string, initial: T): [T, React.Dispatch<React.S
   return [value, setValue];
 }
 
-type ThemeChoice = 'light' | 'dark' | 'system';
-
-function useTheme(): [ThemeChoice, (t: ThemeChoice) => void, boolean] {
-  const [choice, setChoice] = useLocalStorage<ThemeChoice>('theme', 'system');
-  const [systemDark, setSystemDark] = useState(() => {
-    try {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    let mq: MediaQueryList | null = null;
-    try {
-      mq = window.matchMedia('(prefers-color-scheme: dark)');
-    } catch {
-      return undefined;
-    }
-    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq?.removeEventListener('change', onChange);
-  }, []);
-  const dark = choice === 'dark' || (choice === 'system' && systemDark);
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark);
-    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-  }, [dark]);
-  return [choice, setChoice, dark];
-}
 
 
 /* ========================================================================== */
@@ -7220,6 +7763,10 @@ const TOOTH_SCOPE: Record<string, ToothScope[]> = {
   'implant-level-impression': ['perm-ant', 'perm-post'],
   'emax-crown-prep': ['perm-ant', 'perm-post'],
   'urgent-care-endo-diagnosis': ['perm-ant', 'perm-post'],
+  'vital-pulp-therapy': ['perm-ant', 'perm-post'],
+  'rct-anterior-single-root': ['perm-ant'],
+  'rct-premolar': ['perm-post'],
+  'rct-molar': ['perm-post'],
   'simple-extraction': ['perm-ant', 'perm-post', 'prim-ant', 'prim-post'],
   'root-tip-extraction': ['perm-ant', 'perm-post', 'prim-ant', 'prim-post'],
   'surgical-extraction': ['perm-ant', 'perm-post'],
@@ -7232,9 +7779,18 @@ const TOOTH_SCOPE: Record<string, ToothScope[]> = {
   'peds-local-anesthesia': ['prim-ant', 'prim-post'],
 };
 
+/** Finer tooth-type limits for procedures written for one tooth type. */
+const TOOTH_TYPE_LIMIT: Record<string, ToothType[]> = {
+  'rct-anterior-single-root': ['central', 'lateral', 'canine'],
+  'rct-premolar': ['premolar'],
+  'rct-molar': ['molar'],
+};
+
 function appliesToTooth(procedureId: string, tooth: ToothInfo | null): boolean {
   if (!tooth) return true;
-  return TOOTH_SCOPE[procedureId]?.includes(tooth.scope) ?? false;
+  if (!(TOOTH_SCOPE[procedureId]?.includes(tooth.scope) ?? false)) return false;
+  const types = TOOTH_TYPE_LIMIT[procedureId];
+  return types ? types.includes(tooth.type) : true;
 }
 
 /* --------------------------- Anesthesia by tooth ------------------------ */
@@ -8158,46 +8714,46 @@ const PIP_PROBLEMS: PipProblem[] = [
 
 /** Warm design tokens. Full literal class strings (Tailwind-visible). */
 const T = {
-  page: 'bg-[#FDFBF7] text-stone-900 dark:bg-stone-950 dark:text-stone-100',
-  card: 'rounded-2xl border border-stone-200/80 bg-white/75 shadow-sm shadow-stone-900/[0.03] backdrop-blur-md dark:border-stone-800 dark:bg-stone-900/60 dark:shadow-none',
+  page: 'bg-stone-100 text-stone-900',
+  card: 'rounded-2xl border border-stone-300 bg-white shadow-sm',
   cardHover:
-    'transition duration-200 hover:-translate-y-0.5 hover:border-amber-300/70 hover:shadow-md hover:shadow-amber-900/[0.06] dark:hover:border-amber-500/40',
-  glass: 'border border-stone-200/80 bg-[#FDFBF7]/80 backdrop-blur-md dark:border-stone-800 dark:bg-stone-950/75',
-  strong: 'text-stone-900 dark:text-stone-50',
-  body: 'text-stone-700 dark:text-stone-300',
-  muted: 'text-stone-500 dark:text-stone-400',
-  faint: 'text-stone-400 dark:text-stone-500',
-  divider: 'border-stone-200/80 dark:border-stone-800',
-  subtle: 'bg-stone-100/70 dark:bg-stone-800/50',
+    'transition duration-200 hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md hover:',
+  glass: 'border border-stone-300 bg-white',
+  strong: 'text-stone-900',
+  body: 'text-stone-700',
+  muted: 'text-stone-600',
+  faint: 'text-stone-600',
+  divider: 'border-stone-300',
+  subtle: 'bg-stone-100',
   input:
-    'w-full rounded-xl border border-stone-200 bg-white/90 px-3 text-sm text-stone-900 placeholder:text-stone-400 shadow-inner shadow-stone-900/[0.02] focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/25 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100 dark:placeholder:text-stone-500 dark:focus:border-amber-500',
+    'w-full rounded-xl border border-stone-300 bg-white px-3 text-sm text-stone-900 placeholder:text-stone-600 shadow-inner focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/25',
   btnPrimary:
-    'inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-3.5 text-sm font-semibold text-amber-50 shadow-sm transition hover:bg-stone-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-500 dark:bg-amber-500 dark:text-stone-950 dark:hover:bg-amber-400 dark:disabled:bg-stone-700 dark:disabled:text-stone-400',
+    'inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-3.5 text-sm font-semibold text-amber-50 shadow-sm transition hover:bg-stone-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-600',
   btnAccent:
-    'inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-3.5 text-sm font-semibold text-white shadow-sm shadow-amber-900/20 transition hover:bg-amber-500 active:scale-[0.98] dark:bg-amber-500 dark:text-stone-950 dark:hover:bg-amber-400',
+    'inline-flex items-center justify-center gap-2 rounded-xl bg-amber-700 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-800 active:scale-[0.98]',
   btnGhost:
-    'inline-flex items-center justify-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 active:scale-[0.98] dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-50',
+    'inline-flex items-center justify-center gap-1.5 rounded-xl px-2.5 text-sm font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 active:scale-[0.98]',
   btnOutline:
-    'inline-flex items-center justify-center gap-1.5 rounded-xl border border-stone-200 bg-white/70 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-300 hover:bg-white active:scale-[0.98] dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-200 dark:hover:bg-stone-800',
-  focus: 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#FDFBF7] dark:focus-visible:ring-offset-stone-950',
-  tableHead: 'border-y border-stone-200/80 bg-stone-100/60 text-[11px] uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-stone-800/40 dark:text-stone-400',
-  row: 'align-top transition hover:bg-amber-50/40 dark:hover:bg-stone-800/40',
-  eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400',
+    'inline-flex items-center justify-center gap-1.5 rounded-xl border border-stone-300 bg-white px-3 text-sm font-medium text-stone-700 transition hover:border-stone-300 hover:bg-white active:scale-[0.98]',
+  focus: 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white',
+  tableHead: 'border-y border-stone-300 bg-stone-100 text-[11px] uppercase tracking-wider text-stone-700',
+  row: 'align-top transition hover:bg-amber-50',
+  eyebrow: 'text-[11px] font-bold uppercase tracking-[0.14em] text-amber-800',
 } as const;
 
 const RISK_STYLE: Record<RiskLevel, { card: string; dot: string; label: string }> = {
   green: {
-    card: 'border-emerald-300/70 bg-emerald-50/80 text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100',
+    card: 'border-emerald-300 bg-emerald-50 text-emerald-950',
     dot: 'bg-emerald-500',
     label: 'Routine',
   },
   yellow: {
-    card: 'border-amber-300/80 bg-amber-50/80 text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100',
-    dot: 'bg-amber-500',
+    card: 'border-amber-300 bg-amber-50 text-amber-950',
+    dot: 'bg-amber-700',
     label: 'Caution',
   },
   red: {
-    card: 'border-rose-300/80 bg-rose-50/80 text-rose-950 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-100',
+    card: 'border-rose-300 bg-rose-50 text-rose-950',
     dot: 'bg-rose-600',
     label: 'Defer / act',
   },
@@ -8213,7 +8769,7 @@ function Badge({ children, className }: { children: React.ReactNode; className?:
 
 function CdtBadge({ code }: { code: string }) {
   return (
-    <Badge className="bg-stone-100 font-mono text-stone-700 ring-stone-400/25 dark:bg-stone-800 dark:text-stone-300 dark:ring-stone-600/40">
+    <Badge className="bg-stone-100 font-mono text-stone-700 ring-stone-400/25">
       {code}
     </Badge>
   );
@@ -8221,7 +8777,7 @@ function CdtBadge({ code }: { code: string }) {
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-stone-300 bg-white px-1.5 py-0.5 font-mono text-[11px] font-semibold text-stone-600 shadow-[0_1px_0_rgba(0,0,0,0.08)] dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300">
+    <kbd className="inline-flex min-w-[1.5rem] items-center justify-center rounded-md border border-stone-300 bg-white px-1.5 py-0.5 font-mono text-[11px] font-semibold text-stone-600 shadow-[0_1px_0_rgba(0,0,0,0.08)]">
       {children}
     </kbd>
   );
@@ -8248,7 +8804,7 @@ function SectionCard({
     <section id={id} className={cx('scroll-mt-44', T.card)}>
       <div className={cx('flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4', T.divider)}>
         <div className="flex items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100/80 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-100 text-amber-800">
             <Icon className="h-[18px] w-[18px]" aria-hidden />
           </span>
           <div>
@@ -8265,11 +8821,11 @@ function SectionCard({
 
 function CheckpointCallout({ text }: { text: string }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-amber-300/80 bg-gradient-to-br from-amber-50 to-orange-50/60 p-3.5 dark:border-amber-500/30 dark:from-amber-500/10 dark:to-orange-500/5">
-      <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+    <div className="flex gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3.5">
+      <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden />
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">Clinical Checkpoint</p>
-        <p className="mt-0.5 text-sm leading-snug text-amber-950 dark:text-amber-100">{text}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">Clinical Checkpoint</p>
+        <p className="mt-0.5 text-sm leading-snug text-amber-950">{text}</p>
       </div>
     </div>
   );
@@ -8277,11 +8833,11 @@ function CheckpointCallout({ text }: { text: string }) {
 
 function CautionCallout({ text, title = 'Caution' }: { text: string; title?: string }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-rose-200 border-l-4 border-l-rose-700 bg-rose-50/70 p-3.5 dark:border-rose-500/30 dark:border-l-rose-400 dark:bg-rose-500/10">
-      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700 dark:text-rose-300" aria-hidden />
+    <div className="flex gap-3 rounded-xl border border-rose-200 border-l-4 border-l-rose-700 bg-rose-50 p-3.5">
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" aria-hidden />
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-wider text-rose-800 dark:text-rose-300">{title}</p>
-        <p className="mt-0.5 text-sm leading-snug text-rose-950 dark:text-rose-100">{text}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wider text-rose-800">{title}</p>
+        <p className="mt-0.5 text-sm leading-snug text-rose-950">{text}</p>
       </div>
     </div>
   );
@@ -8290,7 +8846,7 @@ function CautionCallout({ text, title = 'Caution' }: { text: string; title?: str
 function NoteCallout({ label, text }: { label: string; text: string }) {
   return (
     <div className={cx('flex gap-2.5 rounded-xl border p-3 text-sm', T.divider, T.subtle, T.body)}>
-      <Info className="mt-0.5 h-4 w-4 shrink-0 text-teal-700 dark:text-teal-300" aria-hidden />
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-teal-700" aria-hidden />
       <p>
         <span className={cx('font-semibold', T.strong)}>{label}: </span>
         {text}
@@ -8313,7 +8869,7 @@ function Segmented<V extends string>({
   size?: 'sm' | 'md';
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex flex-wrap gap-1 rounded-xl bg-stone-100 p-1 dark:bg-stone-800/70">
+    <div role="radiogroup" aria-label={label} className="inline-flex flex-wrap gap-1 rounded-xl bg-stone-100 p-1">
       {options.map((o) => {
         const on = o.value === value;
         return (
@@ -8327,8 +8883,8 @@ function Segmented<V extends string>({
               'inline-flex items-center gap-1.5 rounded-lg font-medium transition',
               size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm',
               on
-                ? 'bg-white text-stone-900 shadow-sm dark:bg-stone-950 dark:text-amber-300'
-                : 'text-stone-600 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100',
+                ? 'bg-white text-stone-900 shadow-sm'
+                : 'text-stone-600 hover:text-stone-900',
               T.focus,
             )}
           >
@@ -8377,11 +8933,11 @@ function ChoiceChips<V extends string>({
               'rounded-xl border px-3 py-1.5 text-left text-sm font-medium transition active:scale-[0.98]',
               on
                 ? tone === 'alert'
-                  ? 'border-rose-700 bg-rose-800 text-white dark:border-rose-400 dark:bg-rose-400 dark:text-stone-950'
+                  ? 'border-rose-700 bg-rose-800 text-white'
                   : tone === 'warn'
-                    ? 'border-amber-600 bg-amber-600 text-white dark:border-amber-400 dark:bg-amber-400 dark:text-stone-950'
-                    : 'border-stone-900 bg-stone-900 text-amber-50 dark:border-amber-400 dark:bg-amber-400 dark:text-stone-950'
-                : 'border-stone-200 bg-white/70 text-stone-700 hover:border-stone-300 hover:bg-white dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-300 dark:hover:bg-stone-800',
+                    ? 'border-amber-600 bg-amber-700 text-white'
+                    : 'border-stone-900 bg-stone-900 text-amber-50'
+                : 'border-stone-300 bg-white text-stone-700 hover:border-stone-300 hover:bg-white',
               T.focus,
             )}
           >
@@ -8400,12 +8956,12 @@ function Toggle({ checked, onChange, label, description }: { checked: boolean; o
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={cx('flex w-full items-start gap-3 rounded-xl p-2 text-left transition hover:bg-stone-100/70 dark:hover:bg-stone-800/50', T.focus)}
+      className={cx('flex w-full items-start gap-3 rounded-xl p-2 text-left transition hover:bg-stone-100', T.focus)}
     >
       <span
         className={cx(
           'relative mt-0.5 inline-flex h-5 w-9 shrink-0 rounded-full transition',
-          checked ? 'bg-amber-600 dark:bg-amber-500' : 'bg-stone-300 dark:bg-stone-700',
+          checked ? 'bg-amber-700' : 'bg-stone-300',
         )}
       >
         <span className={cx('absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition', checked ? 'left-[18px]' : 'left-0.5')} />
@@ -8420,7 +8976,7 @@ function Toggle({ checked, onChange, label, description }: { checked: boolean; o
 
 function Meter({ value, label, detail }: { value: number; label: string; detail: string }) {
   const pct = Math.max(0, Math.min(1, value));
-  const color = value >= 1 ? 'bg-rose-600' : value >= 0.8 ? 'bg-amber-500' : 'bg-emerald-600';
+  const color = value >= 1 ? 'bg-rose-600' : value >= 0.8 ? 'bg-amber-700' : 'bg-emerald-600';
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between gap-3">
@@ -8428,7 +8984,7 @@ function Meter({ value, label, detail }: { value: number; label: string; detail:
         <span className={cx('font-mono text-sm tabular-nums', T.strong)}>{detail}</span>
       </div>
       <div
-        className="h-2.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800"
+        className="h-2.5 overflow-hidden rounded-full bg-stone-200"
         role="meter"
         aria-label={label}
         aria-valuemin={0}
@@ -8524,7 +9080,7 @@ function Flyout({
   return (
     <div ref={rootRef} className={cx('fixed inset-0 z-50', !open && 'pointer-events-none')} aria-hidden={!open}>
       <div
-        className={cx('absolute inset-0 bg-stone-950/30 backdrop-blur-[2px] transition-opacity duration-300', open ? 'opacity-100' : 'opacity-0')}
+        className={cx('absolute inset-0 bg-stone-900 bg-opacity-50 transition-opacity duration-300', open ? 'opacity-100' : 'opacity-0')}
         onClick={onClose}
       />
       <div
@@ -8535,15 +9091,15 @@ function Flyout({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={cx(
-          'absolute inset-y-0 right-0 flex w-full flex-col border-l shadow-2xl shadow-stone-950/20 outline-none transition-transform duration-300 ease-out',
-          'border-stone-200 bg-[#FDFBF7] dark:border-stone-800 dark:bg-stone-950',
+          'absolute inset-y-0 right-0 flex w-full flex-col border-l shadow-2xl outline-none transition-transform duration-300 ease-out',
+          'border-stone-300 bg-white',
           width,
           open ? 'translate-x-0' : 'translate-x-full',
         )}
       >
         <div className={cx('flex items-start justify-between gap-3 border-b px-5 py-4', T.divider)}>
           <div className="flex items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-amber-500 to-orange-700 text-white shadow-sm shadow-orange-900/20">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-700 text-white shadow-sm">
               <Icon className="h-5 w-5" aria-hidden />
             </span>
             <div>
@@ -8571,8 +9127,8 @@ function Flyout({
 function Callout({ x, y, n }: { x: number; y: number; n: number }) {
   return (
     <g>
-      <circle cx={x} cy={y} r={9} className="fill-amber-500 stroke-white dark:stroke-stone-900" strokeWidth={2} />
-      <text x={x} y={y} textAnchor="middle" dominantBaseline="central" className="fill-white dark:fill-stone-900 text-[10px] font-bold">
+      <circle cx={x} cy={y} r={9} className="fill-amber-700 stroke-white" strokeWidth={2} />
+      <text x={x} y={y} textAnchor="middle" dominantBaseline="central" className="fill-white text-[10px] font-bold">
         {n}
       </text>
     </g>
@@ -8581,7 +9137,7 @@ function Callout({ x, y, n }: { x: number; y: number; n: number }) {
 
 function SvgLabel({ x, y, children, anchor = 'start' }: { x: number; y: number; children: string; anchor?: 'start' | 'middle' | 'end' }) {
   return (
-    <text x={x} y={y} textAnchor={anchor} className="fill-stone-500 dark:fill-stone-400 text-[10px] font-medium uppercase tracking-wide">
+    <text x={x} y={y} textAnchor={anchor} className="fill-stone-600 text-[10px] font-medium uppercase tracking-wide">
       {children}
     </text>
   );
@@ -8590,27 +9146,27 @@ function SvgLabel({ x, y, children, anchor = 'start' }: { x: number; y: number; 
 function ClassIISectionSvg() {
   return (
     <svg viewBox="0 0 480 330" className="h-auto w-full" role="img" aria-label="Mesiodistal section of a Class II MO composite preparation">
-      <rect width="480" height="330" className="fill-white dark:fill-stone-900" />
-      <rect x="0" y="250" width="480" height="80" className="fill-rose-50 dark:fill-rose-950/40" />
+      <rect width="480" height="330" className="fill-white" />
+      <rect x="0" y="250" width="480" height="80" className="fill-rose-50" />
       <path d="M0 250 H480" className="stroke-rose-300" strokeDasharray="4 4" />
       {/* adjacent tooth */}
-      <path d="M480 78 C452 84 432 104 424 136 C416 176 418 222 428 262 L436 330 L480 330 Z" className="fill-stone-100 dark:fill-stone-800/70 stroke-stone-400 dark:stroke-stone-500" strokeWidth={1.5} />
+      <path d="M480 78 C452 84 432 104 424 136 C416 176 418 222 428 262 L436 330 L480 330 Z" className="fill-stone-100 stroke-stone-400" strokeWidth={1.5} />
       {/* prepared tooth */}
       <path
         d="M92 262 C68 200 68 120 110 80 Q145 92 180 96 Q210 86 240 86 Q270 86 300 96 Q335 92 370 80 C412 120 414 200 390 262 L372 322 L330 322 L302 276 L180 276 L152 322 L110 322 Z"
-        className="fill-stone-50 dark:fill-stone-800 stroke-stone-500 dark:stroke-stone-400"
+        className="fill-stone-50 stroke-stone-500"
         strokeWidth={1.5}
       />
       <path
         d="M106 258 C88 200 90 132 120 100 Q150 110 180 114 Q210 106 240 106 Q270 106 300 114 Q330 110 360 100 C394 132 396 200 376 258"
-        className="fill-none stroke-stone-400 dark:stroke-stone-500"
+        className="fill-none stroke-stone-400"
         strokeDasharray="5 4"
       />
-      <path d="M186 248 L186 198 Q188 170 204 166 L210 152 L218 166 L262 166 L272 148 L280 166 Q298 170 300 198 L300 248 Z" className="fill-rose-100 dark:fill-rose-900/40 stroke-rose-300" />
+      <path d="M186 248 L186 198 Q188 170 204 166 L210 152 L218 166 L262 166 L272 148 L280 166 Q298 170 300 198 L300 248 Z" className="fill-rose-100 stroke-rose-300" />
       {/* preparation void */}
       <path
         d="M190 94 L194 124 Q195 130 201 130 L332 130 Q338 130 338 136 L338 208 Q338 214 344 214 L404 214 C409 175 401 110 370 80 Q335 92 300 96 Q270 86 240 86 Q214 86 190 94 Z"
-        className="fill-white dark:fill-stone-900"
+        className="fill-white"
       />
       <path
         d="M190 94 L194 124 Q195 130 201 130 L332 130 Q338 130 338 136 L338 208 Q338 214 344 214 L404 214"
@@ -8636,26 +9192,26 @@ function ClassIISectionSvg() {
 function SectionalMatrixSvg() {
   return (
     <svg viewBox="0 0 480 260" className="h-auto w-full" role="img" aria-label="Occlusal view of sectional matrix, wedge and ring assembly">
-      <rect width="480" height="260" className="fill-white dark:fill-stone-900" />
+      <rect width="480" height="260" className="fill-white" />
       <SvgLabel x={240} y={16} anchor="middle">Buccal</SvgLabel>
       <SvgLabel x={240} y={256} anchor="middle">Lingual</SvgLabel>
-      <ellipse cx={150} cy={130} rx={78} ry={66} className="fill-stone-100 dark:fill-stone-800/70 stroke-stone-400 dark:stroke-stone-500" strokeWidth={1.5} />
-      <rect x={252} y={46} width={176} height={168} rx={52} className="fill-stone-50 dark:fill-stone-800 stroke-stone-500 dark:stroke-stone-400" strokeWidth={1.5} />
+      <ellipse cx={150} cy={130} rx={78} ry={66} className="fill-stone-100 stroke-stone-400" strokeWidth={1.5} />
+      <rect x={252} y={46} width={176} height={168} rx={52} className="fill-stone-50 stroke-stone-500" strokeWidth={1.5} />
       <path
         d="M252 104 L308 104 Q318 104 326 112 L372 118 Q386 130 372 142 L326 148 Q318 156 308 156 L252 156 Z"
-        className="fill-emerald-50 dark:fill-emerald-900/30 stroke-emerald-600"
+        className="fill-emerald-50 stroke-emerald-600"
         strokeWidth={2}
       />
       <SvgLabel x={300} y={134} anchor="middle">MO prep</SvgLabel>
       <SvgLabel x={196} y={134} anchor="middle">Adjacent</SvgLabel>
       {/* sectional band */}
-      <path d="M266 58 C240 86 240 174 266 202" className="fill-none stroke-stone-800 dark:stroke-stone-200" strokeWidth={3} strokeLinecap="round" />
+      <path d="M266 58 C240 86 240 174 266 202" className="fill-none stroke-stone-800" strokeWidth={3} strokeLinecap="round" />
       {/* wedge from lingual */}
-      <path d="M226 252 L254 252 L240 172 Z" className="fill-teal-300 dark:fill-teal-700 stroke-teal-700 dark:stroke-teal-400" strokeWidth={1.5} />
+      <path d="M226 252 L254 252 L240 172 Z" className="fill-teal-300 stroke-teal-700" strokeWidth={1.5} />
       {/* separating ring */}
-      <path d="M237 56 C120 -18 120 278 237 204" className="fill-none stroke-stone-500 dark:stroke-stone-400" strokeWidth={6} strokeLinecap="round" opacity={0.85} />
-      <circle cx={237} cy={56} r={7} className="fill-stone-600 dark:fill-stone-300" />
-      <circle cx={237} cy={204} r={7} className="fill-stone-600 dark:fill-stone-300" />
+      <path d="M237 56 C120 -18 120 278 237 204" className="fill-none stroke-stone-500" strokeWidth={6} strokeLinecap="round" opacity={0.85} />
+      <circle cx={237} cy={56} r={7} className="fill-stone-600" />
+      <circle cx={237} cy={204} r={7} className="fill-stone-600" />
       <Callout x={260} y={82} n={1} />
       <Callout x={266} y={232} n={2} />
       <Callout x={168} y={40} n={3} />
@@ -8667,20 +9223,20 @@ function SectionalMatrixSvg() {
 function CrownSectionSvg() {
   return (
     <svg viewBox="0 0 480 340" className="h-auto w-full" role="img" aria-label="Buccolingual section of a molar prepared for a lithium disilicate crown">
-      <rect width="480" height="340" className="fill-white dark:fill-stone-900" />
-      <rect x="0" y="262" width="480" height="78" className="fill-rose-50 dark:fill-rose-950/40" />
+      <rect width="480" height="340" className="fill-white" />
+      <rect x="0" y="262" width="480" height="78" className="fill-rose-50" />
       <path d="M0 262 H480" className="stroke-rose-300" strokeDasharray="4 4" />
       {/* original contour */}
       <path
         d="M110 272 C86 210 84 140 112 100 L150 68 Q178 90 205 98 L240 102 L275 98 Q302 90 330 68 L368 100 C396 140 394 210 370 272"
-        className="fill-none stroke-stone-400 dark:stroke-stone-500"
+        className="fill-none stroke-stone-400"
         strokeDasharray="6 4"
         strokeWidth={1.5}
       />
       {/* prepared tooth */}
       <path
         d="M110 272 L128 272 Q134 272 134 266 L144 146 Q146 120 172 106 Q205 122 240 124 Q275 122 306 108 L334 140 L344 266 Q344 272 350 272 L370 272 L362 322 L318 322 L300 290 L180 290 L162 322 L118 322 Z"
-        className="fill-stone-100 dark:fill-stone-800/70 stroke-stone-600 dark:stroke-stone-300"
+        className="fill-stone-100 stroke-stone-600"
         strokeWidth={2}
         strokeLinejoin="round"
       />
@@ -8689,11 +9245,11 @@ function CrownSectionSvg() {
         className="fill-none stroke-emerald-600"
         strokeWidth={3}
       />
-      <path d="M192 262 L192 202 Q194 180 210 176 L216 164 L224 176 L256 176 L264 164 L270 176 Q286 180 288 202 L288 262 Z" className="fill-rose-100 dark:fill-rose-900/40 stroke-rose-300" />
+      <path d="M192 262 L192 202 Q194 180 210 176 L216 164 L224 176 L256 176 L264 164 L270 176 Q286 180 288 202 L288 262 Z" className="fill-rose-100 stroke-rose-300" />
       {/* taper reference */}
       <path d="M134 266 V140" className="stroke-teal-500" strokeDasharray="2 3" />
       {/* axial height bracket */}
-      <path d="M384 140 H392 V268 H384" className="fill-none stroke-stone-500 dark:stroke-stone-400" strokeWidth={1.5} />
+      <path d="M384 140 H392 V268 H384" className="fill-none stroke-stone-500" strokeWidth={1.5} />
       <SvgLabel x={8} y={20}>Buccolingual section · maxillary molar</SvgLabel>
       <SvgLabel x={8} y={330}>Buccal</SvgLabel>
       <SvgLabel x={472} y={330} anchor="end">Palatal (functional)</SvgLabel>
@@ -8712,12 +9268,12 @@ function CrownSectionSvg() {
 function TwoCordSvg() {
   return (
     <svg viewBox="0 0 480 260" className="h-auto w-full" role="img" aria-label="Two-cord gingival retraction at the finish line">
-      <rect width="480" height="260" className="fill-white dark:fill-stone-900" />
-      <path d="M40 10 L200 10 L200 146 Q200 152 206 152 L220 152 L220 260 L40 260 Z" className="fill-stone-50 dark:fill-stone-800 stroke-stone-500 dark:stroke-stone-400" strokeWidth={1.5} />
+      <rect width="480" height="260" className="fill-white" />
+      <path d="M40 10 L200 10 L200 146 Q200 152 206 152 L220 152 L220 260 L40 260 Z" className="fill-stone-50 stroke-stone-500" strokeWidth={1.5} />
       <path d="M200 138 Q200 152 212 152 L220 152" className="fill-none stroke-emerald-600" strokeWidth={3} />
-      <path d="M240 96 Q250 86 272 88 L480 88 L480 260 L222 260 L222 214 Q240 206 240 186 Z" className="fill-rose-100 dark:fill-rose-900/40 stroke-rose-300" strokeWidth={1.5} />
-      <circle cx={229} cy={200} r={4} className="fill-stone-800 dark:fill-stone-200" />
-      <circle cx={230} cy={180} r={8} className="fill-teal-300 dark:fill-teal-700 stroke-teal-700 dark:stroke-teal-300" strokeWidth={1.5} />
+      <path d="M240 96 Q250 86 272 88 L480 88 L480 260 L222 260 L222 214 Q240 206 240 186 Z" className="fill-rose-100 stroke-rose-300" strokeWidth={1.5} />
+      <circle cx={229} cy={200} r={4} className="fill-stone-800" />
+      <circle cx={230} cy={180} r={8} className="fill-teal-300 stroke-teal-700" strokeWidth={1.5} />
       <SvgLabel x={120} y={80} anchor="middle">Prepared axial wall</SvgLabel>
       <SvgLabel x={130} y={222} anchor="middle">Unprepared root</SvgLabel>
       <SvgLabel x={352} y={78} anchor="middle">Free gingival margin</SvgLabel>
@@ -8736,7 +9292,7 @@ function ZoneStroke({ d, className }: { d: string; className: string }) {
 }
 
 function FrenumMark({ x, y }: { x: number; y: number }) {
-  return <circle cx={x} cy={y} r={4.5} className="fill-white dark:fill-stone-900 stroke-rose-500" strokeWidth={2} />;
+  return <circle cx={x} cy={y} r={4.5} className="fill-white stroke-rose-500" strokeWidth={2} />;
 }
 
 function MaxBorderSvg() {
@@ -8748,15 +9304,15 @@ function MaxBorderSvg() {
   const pps = 'M290 290 Q180 314 70 290';
   return (
     <svg viewBox="0 0 360 330" className="h-auto w-full" role="img" aria-label="Maxillary custom tray border-molding zones, intaglio view">
-      <rect width="360" height="330" className="fill-white dark:fill-stone-900" />
+      <rect width="360" height="330" className="fill-white" />
       <SvgLabel x={180} y={14} anchor="middle">Anterior</SvgLabel>
       <path
         d="M70 290 C62 265 58 245 60 220 C62 160 74 108 104 70 C140 28 220 28 256 70 C286 108 298 160 300 220 C302 245 298 265 290 290 Q180 314 70 290 Z"
-        className="fill-stone-100 dark:fill-stone-800/70 stroke-stone-400 dark:stroke-stone-500"
+        className="fill-stone-100 stroke-stone-400"
         strokeWidth={1.5}
       />
       {/* ridge crest */}
-      <path d="M100 282 C92 230 92 170 112 125 C130 90 150 72 180 70 C210 72 230 90 248 125 C268 170 268 230 260 282" className="fill-none stroke-stone-400 dark:stroke-stone-500" strokeDasharray="5 4" />
+      <path d="M100 282 C92 230 92 170 112 125 C130 90 150 72 180 70 C210 72 230 90 248 125 C268 170 268 230 260 282" className="fill-none stroke-stone-400" strokeDasharray="5 4" />
       <SvgLabel x={180} y={210} anchor="middle">Palate</SvgLabel>
       <ZoneStroke d={labial} className="stroke-teal-600" />
       <ZoneStroke d={buccalL} className="stroke-emerald-500" />
@@ -8768,10 +9324,10 @@ function MaxBorderSvg() {
       <FrenumMark x={180} y={38} />
       <FrenumMark x={80} y={128} />
       <FrenumMark x={280} y={128} />
-      <circle cx={70} cy={290} r={3.5} className="fill-stone-700 dark:fill-stone-300" />
-      <circle cx={290} cy={290} r={3.5} className="fill-stone-700 dark:fill-stone-300" />
+      <circle cx={70} cy={290} r={3.5} className="fill-stone-700" />
+      <circle cx={290} cy={290} r={3.5} className="fill-stone-700" />
       {/* relief hole */}
-      <circle cx={180} cy={128} r={5} className="fill-white dark:fill-stone-900 stroke-stone-700 dark:stroke-stone-300" strokeWidth={1.5} />
+      <circle cx={180} cy={128} r={5} className="fill-white stroke-stone-700" strokeWidth={1.5} />
       <SvgLabel x={180} y={112} anchor="middle">Rugae</SvgLabel>
       <Callout x={210} y={20} n={1} />
       <Callout x={40} y={150} n={2} />
@@ -8793,18 +9349,18 @@ function MandBorderSvg() {
   const rmhR = 'M256 290 C255 275 253 255 250 230';
   return (
     <svg viewBox="0 0 360 330" className="h-auto w-full" role="img" aria-label="Mandibular custom tray border-molding zones, intaglio view">
-      <rect width="360" height="330" className="fill-white dark:fill-stone-900" />
+      <rect width="360" height="330" className="fill-white" />
       <SvgLabel x={180} y={14} anchor="middle">Anterior</SvgLabel>
       <path
         d="M66 285 C50 220 52 150 90 95 C120 55 150 42 180 42 C210 42 240 55 270 95 C308 150 310 220 294 285 C300 300 290 312 276 312 C262 312 256 302 256 290 C255 275 253 255 250 230 C246 205 240 170 215 135 C200 115 190 110 180 110 C170 110 160 115 145 135 C120 170 114 205 110 230 C107 255 105 275 104 290 C104 302 98 312 84 312 C70 312 60 300 66 285 Z"
-        className="fill-stone-100 dark:fill-stone-800/70 stroke-stone-400 dark:stroke-stone-500"
+        className="fill-stone-100 stroke-stone-400"
         strokeWidth={1.5}
       />
       {/* retromolar pads */}
-      <ellipse cx={82} cy={294} rx={16} ry={13} className="fill-rose-100 dark:fill-rose-900/40 stroke-rose-300" strokeDasharray="3 3" />
-      <ellipse cx={278} cy={294} rx={16} ry={13} className="fill-rose-100 dark:fill-rose-900/40 stroke-rose-300" strokeDasharray="3 3" />
+      <ellipse cx={82} cy={294} rx={16} ry={13} className="fill-rose-100 stroke-rose-300" strokeDasharray="3 3" />
+      <ellipse cx={278} cy={294} rx={16} ry={13} className="fill-rose-100 stroke-rose-300" strokeDasharray="3 3" />
       {/* ridge crest */}
-      <path d="M86 286 C80 230 80 170 108 118 C130 84 155 74 180 74 C205 74 230 84 252 118 C280 170 280 230 274 286" className="fill-none stroke-stone-400 dark:stroke-stone-500" strokeDasharray="5 4" />
+      <path d="M86 286 C80 230 80 170 108 118 C130 84 155 74 180 74 C205 74 230 84 252 118 C280 170 280 230 274 286" className="fill-none stroke-stone-400" strokeDasharray="5 4" />
       <SvgLabel x={180} y={200} anchor="middle">Tongue space</SvgLabel>
       <ZoneStroke d={labial} className="stroke-teal-600" />
       <ZoneStroke d={buccalL} className="stroke-emerald-500" />
@@ -8974,18 +9530,18 @@ function OdontogramArch({ dentition, selected, onSelect }: { dentition: Dentitio
           className={cx(
             'transition-colors duration-150',
             on
-              ? 'fill-amber-500 stroke-amber-700 dark:fill-amber-400 dark:stroke-amber-200'
-              : 'fill-white stroke-stone-300 group-hover:fill-amber-100 group-hover:stroke-amber-400 group-focus-visible:stroke-amber-600 dark:fill-stone-800 dark:stroke-stone-600 dark:group-hover:fill-amber-500/20',
+              ? 'fill-amber-700 stroke-amber-700'
+              : 'fill-white stroke-stone-300 group-hover:fill-amber-100 group-hover:stroke-amber-400 group-focus-visible:stroke-amber-600',
           )}
           strokeWidth={on ? 2.5 : 1.5}
         />
         {t.type === 'molar' && !on && (
-          <path d="M-6 -3 L0 3 L6 -3" transform={`rotate(${rot.toFixed(1)})`} className="fill-none stroke-stone-200 dark:stroke-stone-700" strokeWidth={1.2} />
+          <path d="M-6 -3 L0 3 L6 -3" transform={`rotate(${rot.toFixed(1)})`} className="fill-none stroke-stone-200" strokeWidth={1.2} />
         )}
         <text
           textAnchor="middle"
           dominantBaseline="central"
-          className={cx('pointer-events-none select-none text-[11px] font-bold tabular-nums', on ? 'fill-white dark:fill-stone-950' : 'fill-stone-600 dark:fill-stone-300')}
+          className={cx('pointer-events-none select-none text-[11px] font-bold tabular-nums', on ? 'fill-white' : 'fill-stone-600')}
         >
           {t.id}
         </text>
@@ -8994,17 +9550,17 @@ function OdontogramArch({ dentition, selected, onSelect }: { dentition: Dentitio
   };
   return (
     <svg viewBox="0 0 640 440" className="h-auto w-full" role="group" aria-label={`${adult ? 'Permanent' : 'Primary'} dentition chart`}>
-      <text x={320} y={150} textAnchor="middle" className="fill-stone-400 text-[11px] font-semibold uppercase tracking-[0.2em] dark:fill-stone-500">
+      <text x={320} y={150} textAnchor="middle" className="fill-stone-600 text-[11px] font-semibold uppercase tracking-[0.2em]">
         Maxillary
       </text>
-      <text x={320} y={300} textAnchor="middle" className="fill-stone-400 text-[11px] font-semibold uppercase tracking-[0.2em] dark:fill-stone-500">
+      <text x={320} y={300} textAnchor="middle" className="fill-stone-600 text-[11px] font-semibold uppercase tracking-[0.2em]">
         Mandibular
       </text>
-      <line x1={70} y1={220} x2={570} y2={220} className="stroke-stone-200 dark:stroke-stone-800" strokeDasharray="4 6" />
-      <text x={24} y={224} className="fill-stone-400 text-[10px] font-medium uppercase tracking-wider dark:fill-stone-500">
+      <line x1={70} y1={220} x2={570} y2={220} className="stroke-stone-200" strokeDasharray="4 6" />
+      <text x={24} y={224} className="fill-stone-600 text-[10px] font-medium uppercase tracking-wider">
         Pt right
       </text>
-      <text x={616} y={224} textAnchor="end" className="fill-stone-400 text-[10px] font-medium uppercase tracking-wider dark:fill-stone-500">
+      <text x={616} y={224} textAnchor="end" className="fill-stone-600 text-[10px] font-medium uppercase tracking-wider">
         Pt left
       </text>
       {upper.map(renderTooth)}
@@ -9077,7 +9633,7 @@ function OdontogramPanel({
           {la && (
             <div className={cx(T.card, 'p-4')}>
               <div className="flex items-center gap-2">
-                <Syringe className="h-4 w-4 text-amber-700 dark:text-amber-300" aria-hidden />
+                <Syringe className="h-4 w-4 text-amber-700" aria-hidden />
                 <h3 className={cx('text-sm font-semibold', T.strong)}>Suggested anesthesia</h3>
               </div>
               <dl className="mt-3 space-y-2.5 text-sm">
@@ -9094,7 +9650,7 @@ function OdontogramPanel({
                 <ul className={cx('mt-3 space-y-1 text-xs', T.muted)}>
                   {la.notes.map((n) => (
                     <li key={n} className="flex gap-2">
-                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-700" aria-hidden />
                       {n}
                     </li>
                   ))}
@@ -9117,11 +9673,11 @@ function OdontogramPanel({
                       <button
                         type="button"
                         onClick={() => onOpenProcedure(p.id)}
-                        className={cx('flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition hover:bg-amber-50 dark:hover:bg-stone-800', T.focus)}
+                        className={cx('flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition hover:bg-amber-50', T.focus)}
                       >
                         <span className={cx('h-2 w-2 shrink-0 rounded-full', ACCENT[cat.accent].dot)} aria-hidden />
                         <span className={cx('flex-1 truncate', T.body)}>{p.shortTitle}</span>
-                        <ChevronRight className="h-4 w-4 shrink-0 text-stone-400" aria-hidden />
+                        <ChevronRight className="h-4 w-4 shrink-0 text-stone-600" aria-hidden />
                       </button>
                     </li>
                   );
@@ -9174,15 +9730,17 @@ function LADoseCalculator({ defaultPopulation = 'adult', compact = false }: { de
               aria-label={`Weight in ${unit}`}
               className={cx(T.input, 'h-11 text-lg font-semibold tabular-nums')}
             />
-            <Segmented
-              label="Weight unit"
-              value={unit}
-              onChange={setUnit}
-              options={[
-                { value: 'lb', label: 'lb' },
-                { value: 'kg', label: 'kg' },
-              ]}
-            />
+            <span className="shrink-0">
+              <Segmented
+                label="Weight unit"
+                value={unit}
+                onChange={setUnit}
+                options={[
+                  { value: 'lb', label: 'lb' },
+                  { value: 'kg', label: 'kg' },
+                ]}
+              />
+            </span>
           </div>
           {weightKg !== null && (
             <span className={cx('mt-1 block text-xs tabular-nums', T.muted)}>
@@ -9246,27 +9804,27 @@ function LADoseCalculator({ defaultPopulation = 'adult', compact = false }: { de
                   <th scope="col" className="px-4 py-2.5 font-semibold">Remaining</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-stone-200/70 dark:divide-stone-800">
+              <tbody className="divide-y divide-stone-300">
                 {LA_DOSING.map((agent) => {
                   const d = agentDose(agent, input);
                   const rem = tally ? remainingCarpules(agent, input, tally) : d.maxCarpules;
                   const blocked = d.limits.notRecommended;
                   return (
-                    <tr key={agent.id} className={cx(T.row, blocked && 'opacity-60')}>
+                    <tr key={agent.id} className={cx(T.row, blocked && 'bg-stone-50')}>
                       <th scope="row" className={cx('px-4 py-3 font-medium', T.strong)}>
                         {agent.name}
-                        {d.limits.note && <span className={cx('block text-xs font-normal', blocked ? 'text-rose-700 dark:text-rose-300' : T.muted)}>{d.limits.note}</span>}
+                        {d.limits.note && <span className={cx('block text-xs font-normal', blocked ? 'text-rose-700' : T.muted)}>{d.limits.note}</span>}
                       </th>
                       <td className={cx('whitespace-nowrap px-3 py-3 tabular-nums', T.muted)}>
                         {d.limits.mgPerKg.toFixed(1)} · {d.limits.maxMg} mg
                       </td>
                       <td className={cx('px-3 py-3 font-mono tabular-nums', T.strong)}>{Math.round(d.maxMg)}</td>
                       <td className="px-3 py-3">
-                        <span className="rounded-lg bg-stone-900 px-2 py-1 font-mono text-base font-bold tabular-nums text-amber-50 dark:bg-amber-500 dark:text-stone-950">
+                        <span className="rounded-lg bg-stone-900 px-2 py-1 font-mono text-base font-bold tabular-nums text-amber-50">
                           {blocked ? '—' : d.maxCarpules.toFixed(1)}
                         </span>
                         {!blocked && d.limitedBy === 'epinephrine' && (
-                          <span className="ml-2 inline-flex items-center gap-1 text-xs font-semibold text-rose-800 dark:text-rose-300">
+                          <span className="ml-2 inline-flex items-center gap-1 text-xs font-semibold text-rose-800">
                             <HeartPulse className="h-3 w-3" aria-hidden />
                             epi-limited
                           </span>
@@ -9276,7 +9834,7 @@ function LADoseCalculator({ defaultPopulation = 'adult', compact = false }: { de
                         <span
                           className={cx(
                             'font-mono text-base font-bold tabular-nums',
-                            blocked ? T.faint : rem <= 0 ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-800 dark:text-emerald-300',
+                            blocked ? T.faint : rem <= 0 ? 'text-rose-700' : 'text-emerald-800',
                           )}
                         >
                           {blocked ? '—' : rem.toFixed(1)}
@@ -9381,10 +9939,10 @@ function StepTimerChip({ id, preset, api }: { id: string; preset: TimerPreset; a
       className={cx(
         'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-semibold transition active:scale-[0.97]',
         s.running
-          ? 'border-stone-900 bg-stone-900 text-amber-50 dark:border-amber-400 dark:bg-amber-400 dark:text-stone-950'
+          ? 'border-stone-900 bg-stone-900 text-amber-50'
           : s.done
-            ? 'animate-pulse border-rose-400 bg-rose-50 text-rose-800 dark:bg-rose-500/15 dark:text-rose-200'
-            : 'border-stone-200 bg-white text-stone-700 hover:border-amber-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200',
+            ? 'animate-pulse border-rose-400 bg-rose-50 text-rose-800'
+            : 'border-stone-300 bg-white text-stone-700 hover:border-amber-400',
         T.focus,
       )}
       aria-label={`${s.running ? 'Pause' : 'Start'} ${preset.label}`}
@@ -9403,7 +9961,7 @@ function ProtocolList({ steps, prefix, api, presets }: { steps: ProtocolStepLite
         const tid = `${prefix}-${i}`;
         return (
           <li key={tid} className="flex gap-3">
-            <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-stone-900 text-[11px] font-bold text-amber-50 dark:bg-amber-500 dark:text-stone-950">
+            <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-stone-900 text-[11px] font-bold text-amber-50">
               {i + 1}
             </span>
             <div className="min-w-0 flex-1">
@@ -9467,7 +10025,7 @@ function SubstrateDetail({ substrate, soundOn }: { substrate: SubstrateProtocol;
         <ul className="space-y-2">
           {substrate.cements.map((c) => (
             <li key={c.name} className="flex gap-3">
-              <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden />
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
               <p className={cx('text-sm', T.body)}>
                 <span className={cx('font-semibold', T.strong)}>{c.name}: </span>
                 {c.when}
@@ -9489,8 +10047,8 @@ function SubstrateDetail({ substrate, soundOn }: { substrate: SubstrateProtocol;
                 <Badge
                   className={
                     rmgiOk
-                      ? 'bg-emerald-50 text-emerald-800 ring-emerald-700/20 dark:bg-emerald-500/10 dark:text-emerald-300'
-                      : 'bg-rose-50 text-rose-800 ring-rose-700/20 dark:bg-rose-500/10 dark:text-rose-300'
+                      ? 'bg-emerald-50 text-emerald-800 ring-emerald-700/20'
+                      : 'bg-rose-50 text-rose-800 ring-rose-700/20'
                   }
                 >
                   {rmgiOk ? 'Retentive — RMGI acceptable' : 'Low retention — use resin cement'}
@@ -9521,7 +10079,7 @@ function CementationPanel({ soundOn }: { soundOn: boolean }) {
               onClick={() => setId(s.id)}
               className={cx(
                 'rounded-2xl border p-3.5 text-left transition active:scale-[0.98]',
-                on ? cx(ACCENT[s.accent].soft, 'border-2 shadow-sm') : 'border-stone-200 bg-white/70 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-900/50',
+                on ? cx(ACCENT[s.accent].soft, 'border-2 shadow-sm') : 'border-stone-300 bg-white hover:border-stone-300',
                 T.focus,
               )}
             >
@@ -9574,11 +10132,11 @@ Findings: cold ${ENDO_LABELS.cold[f.cold].toLowerCase()}${f.spontaneous ? ', spo
     <div className="space-y-5">
       <div className={cx('sticky -top-5 z-10 -mx-5 -mt-5 border-b px-5 pb-4 pt-5', T.glass)}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl bg-gradient-to-br from-stone-900 to-stone-800 p-4 text-amber-50 dark:from-stone-800 dark:to-stone-900">
+          <div className="rounded-2xl bg-stone-900 p-4 text-white">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-300">Pulpal</p>
             <p className="mt-1 text-lg font-semibold leading-tight">{r.pulp}</p>
           </div>
-          <div className="rounded-2xl bg-gradient-to-br from-orange-700 to-rose-800 p-4 text-orange-50">
+          <div className="rounded-2xl bg-rose-800 p-4 text-white">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-200">Apical</p>
             <p className="mt-1 text-lg font-semibold leading-tight">{r.apical}</p>
           </div>
@@ -9708,7 +10266,7 @@ Findings: cold ${ENDO_LABELS.cold[f.cold].toLowerCase()}${f.spontaneous ? ', spo
         <ul className="mt-2 space-y-1">
           {r.rationale.map((x) => (
             <li key={x} className={cx('flex gap-2 text-sm', T.body)}>
-              <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden />
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
               {x}
             </li>
           ))}
@@ -9755,14 +10313,14 @@ function TriageCard({ label, result }: { label: string; result: TriageResult | n
   return (
     <div className={cx('rounded-2xl border p-4', s.card)} role="status">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wider opacity-80">{label}</p>
+        <p className="text-xs font-bold uppercase tracking-wider">{label}</p>
         <span className="inline-flex items-center gap-1.5 text-xs font-bold">
           <span className={cx('h-2.5 w-2.5 rounded-full', s.dot)} aria-hidden />
           {s.label}
         </span>
       </div>
       <p className="mt-1 text-lg font-semibold">{result.title}</p>
-      <p className="mt-1 text-sm leading-snug opacity-90">{result.detail}</p>
+      <p className="mt-1 text-sm leading-snug">{result.detail}</p>
     </div>
   );
 }
@@ -9896,7 +10454,7 @@ function MedicalRiskPanel() {
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-xs uppercase tracking-wider opacity-70">
+                    <tr className="text-xs uppercase tracking-wider">
                       <th scope="col" className="py-1 pr-3 font-semibold">Regimen</th>
                       <th scope="col" className="py-1 pr-3 font-semibold">{child ? 'Child' : 'Adult'}</th>
                     </tr>
@@ -9938,27 +10496,27 @@ interface ZoneGeometry {
 }
 
 const MAX_ZONE_GEOMETRY: Record<string, ZoneGeometry> = {
-  mx1: { paths: ['M104 70 C140 28 220 28 256 70'], badges: [[180, 24]], stroke: 'stroke-teal-600 dark:stroke-teal-400' },
-  mx2: { paths: ['M66 150 C72 118 86 90 104 70', 'M256 70 C274 90 288 118 294 150'], badges: [[62, 100], [298, 100]], stroke: 'stroke-emerald-600 dark:stroke-emerald-400' },
-  mx3: { paths: ['M60 220 C59 195 61 170 66 150', 'M294 150 C299 170 301 195 300 220'], badges: [[40, 186], [320, 186]], stroke: 'stroke-yellow-600 dark:stroke-yellow-400' },
-  mx4: { paths: ['M70 290 C62 265 58 245 60 220', 'M300 220 C302 245 298 265 290 290'], badges: [[42, 260], [318, 260]], stroke: 'stroke-orange-600 dark:stroke-orange-400' },
-  mx5: { paths: ['M290 290 Q180 314 70 290'], badges: [[180, 322]], stroke: 'stroke-rose-600 dark:stroke-rose-400' },
+  mx1: { paths: ['M104 70 C140 28 220 28 256 70'], badges: [[180, 24]], stroke: 'stroke-teal-600' },
+  mx2: { paths: ['M66 150 C72 118 86 90 104 70', 'M256 70 C274 90 288 118 294 150'], badges: [[62, 100], [298, 100]], stroke: 'stroke-emerald-600' },
+  mx3: { paths: ['M60 220 C59 195 61 170 66 150', 'M294 150 C299 170 301 195 300 220'], badges: [[40, 186], [320, 186]], stroke: 'stroke-yellow-600' },
+  mx4: { paths: ['M70 290 C62 265 58 245 60 220', 'M300 220 C302 245 298 265 290 290'], badges: [[42, 260], [318, 260]], stroke: 'stroke-orange-600' },
+  mx5: { paths: ['M290 290 Q180 314 70 290'], badges: [[180, 322]], stroke: 'stroke-rose-600' },
 };
 
 const MAND_ZONE_GEOMETRY: Record<string, ZoneGeometry> = {
-  md1: { paths: ['M90 95 C120 55 150 42 180 42 C210 42 240 55 270 95'], badges: [[180, 24]], stroke: 'stroke-teal-600 dark:stroke-teal-400' },
-  md2: { paths: ['M70 130 C76 115 82 104 90 95', 'M270 95 C278 104 284 115 290 130'], badges: [[56, 100], [304, 100]], stroke: 'stroke-emerald-600 dark:stroke-emerald-400' },
-  md3: { paths: ['M66 285 C52 240 52 175 70 130', 'M290 130 C308 175 308 240 294 285'], badges: [[34, 208], [326, 208]], stroke: 'stroke-yellow-600 dark:stroke-yellow-400' },
+  md1: { paths: ['M90 95 C120 55 150 42 180 42 C210 42 240 55 270 95'], badges: [[180, 24]], stroke: 'stroke-teal-600' },
+  md2: { paths: ['M70 130 C76 115 82 104 90 95', 'M270 95 C278 104 284 115 290 130'], badges: [[56, 100], [304, 100]], stroke: 'stroke-emerald-600' },
+  md3: { paths: ['M66 285 C52 240 52 175 70 130', 'M290 130 C308 175 308 240 294 285'], badges: [[34, 208], [326, 208]], stroke: 'stroke-yellow-600' },
   md4: {
     paths: ['M66 285 C60 300 70 312 84 312 C98 312 104 302 104 290', 'M256 290 C256 302 262 312 276 312 C290 312 300 300 294 285'],
     badges: [[84, 330], [276, 330]],
-    stroke: 'stroke-pink-600 dark:stroke-pink-400',
+    stroke: 'stroke-pink-600',
   },
-  md5: { paths: ['M104 290 C105 275 107 255 110 230', 'M250 230 C253 255 255 275 256 290'], badges: [[130, 262], [230, 262]], stroke: 'stroke-orange-600 dark:stroke-orange-400' },
+  md5: { paths: ['M104 290 C105 275 107 255 110 230', 'M250 230 C253 255 255 275 256 290'], badges: [[130, 262], [230, 262]], stroke: 'stroke-orange-600' },
   md6: {
     paths: ['M110 230 C114 205 120 170 145 135 C160 115 170 110 180 110 C190 110 200 115 215 135 C240 170 246 205 250 230'],
     badges: [[180, 134]],
-    stroke: 'stroke-amber-600 dark:stroke-amber-400',
+    stroke: 'stroke-amber-600',
   },
 };
 
@@ -9972,23 +10530,23 @@ function BorderMap({ arch, selected, onSelect }: { arch: 'maxillary' | 'mandibul
   const zones = BORDER_ZONES.filter((z) => z.arch === arch);
   return (
     <svg viewBox="0 0 360 345" className="h-auto w-full" role="group" aria-label={`${arch} border-molding zones`}>
-      <text x={180} y={10} textAnchor="middle" className="fill-stone-400 text-[9px] font-semibold uppercase tracking-[0.2em] dark:fill-stone-500">
+      <text x={180} y={10} textAnchor="middle" className="fill-stone-600 text-[9px] font-semibold uppercase tracking-[0.2em]">
         Anterior
       </text>
-      <path d={arch === 'maxillary' ? MAX_OUTLINE : MAND_OUTLINE} className="fill-stone-100 stroke-stone-300 dark:fill-stone-800/70 dark:stroke-stone-600" strokeWidth={1.5} />
+      <path d={arch === 'maxillary' ? MAX_OUTLINE : MAND_OUTLINE} className="fill-stone-100 stroke-stone-300" strokeWidth={1.5} />
       {arch === 'maxillary' ? (
         <>
-          <text x={180} y={200} textAnchor="middle" className="fill-stone-400 text-[10px] font-medium uppercase tracking-wider dark:fill-stone-500">
+          <text x={180} y={200} textAnchor="middle" className="fill-stone-600 text-[10px] font-medium uppercase tracking-wider">
             Palate
           </text>
-          <circle cx={70} cy={290} r={3.5} className="fill-stone-600 dark:fill-stone-300" />
-          <circle cx={290} cy={290} r={3.5} className="fill-stone-600 dark:fill-stone-300" />
+          <circle cx={70} cy={290} r={3.5} className="fill-stone-600" />
+          <circle cx={290} cy={290} r={3.5} className="fill-stone-600" />
         </>
       ) : (
         <>
-          <ellipse cx={84} cy={296} rx={15} ry={12} className="fill-rose-100 stroke-rose-300 dark:fill-rose-900/40 dark:stroke-rose-700" strokeDasharray="3 3" />
-          <ellipse cx={276} cy={296} rx={15} ry={12} className="fill-rose-100 stroke-rose-300 dark:fill-rose-900/40 dark:stroke-rose-700" strokeDasharray="3 3" />
-          <text x={180} y={210} textAnchor="middle" className="fill-stone-400 text-[10px] font-medium uppercase tracking-wider dark:fill-stone-500">
+          <ellipse cx={84} cy={296} rx={15} ry={12} className="fill-rose-100 stroke-rose-300" strokeDasharray="3 3" />
+          <ellipse cx={276} cy={296} rx={15} ry={12} className="fill-rose-100 stroke-rose-300" strokeDasharray="3 3" />
+          <text x={180} y={210} textAnchor="middle" className="fill-stone-600 text-[10px] font-medium uppercase tracking-wider">
             Tongue space
           </text>
         </>
@@ -10034,7 +10592,7 @@ function BorderMap({ arch, selected, onSelect }: { arch: 'maxillary' | 'mandibul
                   r={on ? 12 : 10}
                   className={cx(
                     'transition-all group-focus-visible:stroke-amber-500',
-                    on ? 'fill-stone-900 stroke-amber-400 dark:fill-amber-400 dark:stroke-stone-950' : 'fill-white stroke-stone-300 dark:fill-stone-900 dark:stroke-stone-600',
+                    on ? 'fill-stone-900 stroke-amber-400' : 'fill-white stroke-stone-300',
                   )}
                   strokeWidth={2}
                 />
@@ -10043,7 +10601,7 @@ function BorderMap({ arch, selected, onSelect }: { arch: 'maxillary' | 'mandibul
                   y={by}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  className={cx('pointer-events-none text-[11px] font-bold', on ? 'fill-amber-300 dark:fill-stone-950' : 'fill-stone-700 dark:fill-stone-200')}
+                  className={cx('pointer-events-none text-[11px] font-bold', on ? 'fill-amber-300' : 'fill-stone-700')}
                 >
                   {z.n}
                 </text>
@@ -10114,7 +10672,7 @@ function DentureToolsPanel() {
                   <ol className="mt-1.5 space-y-1.5">
                     {zone.movements.map((m, i) => (
                       <li key={m} className="flex items-start gap-2.5">
-                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-amber-500 text-xs font-bold text-white dark:text-stone-950">{i + 1}</span>
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-amber-700 text-xs font-bold text-white">{i + 1}</span>
                         <span className={cx('text-sm font-medium', T.strong)}>{m}</span>
                       </li>
                     ))}
@@ -10131,7 +10689,7 @@ function DentureToolsPanel() {
                       aria-pressed={z.id === zoneId}
                       className={cx(
                         'flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm transition',
-                        z.id === zoneId ? 'bg-stone-900 text-amber-50 dark:bg-amber-500 dark:text-stone-950' : cx('hover:bg-stone-100 dark:hover:bg-stone-800', T.body),
+                        z.id === zoneId ? 'bg-stone-900 text-amber-50' : cx('hover:bg-stone-100', T.body),
                         T.focus,
                       )}
                     >
@@ -10169,8 +10727,8 @@ function DentureToolsPanel() {
                     className={cx(
                       'w-full rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition active:scale-[0.99]',
                       p.id === problem.id
-                        ? 'border-orange-600 bg-orange-50 text-orange-950 dark:border-orange-400 dark:bg-orange-500/10 dark:text-orange-100'
-                        : 'border-stone-200 bg-white/70 text-stone-700 hover:border-stone-300 dark:border-stone-800 dark:bg-stone-900/50 dark:text-stone-300',
+                        ? 'border-orange-600 bg-orange-50 text-orange-950'
+                        : 'border-stone-300 bg-white text-stone-700 hover:border-stone-300',
                       T.focus,
                     )}
                   >
@@ -10187,7 +10745,7 @@ function DentureToolsPanel() {
               <ol className="mt-1.5 space-y-2">
                 {problem.fix.map((f, i) => (
                   <li key={f} className="flex gap-2.5">
-                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-stone-900 text-[10px] font-bold text-amber-50 dark:bg-amber-500 dark:text-stone-950">{i + 1}</span>
+                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-stone-900 text-[10px] font-bold text-amber-50">{i + 1}</span>
                     <span className={cx('text-sm', T.body)}>{f}</span>
                   </li>
                 ))}
@@ -10240,8 +10798,8 @@ function TraySetup({ procedure }: { procedure: Procedure }) {
       subtitle={`${checked.size} of ${allIds.length} staged`}
       right={
         <div className="flex items-center gap-2">
-          <div className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800 sm:block">
-            <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-600 transition-all" style={{ width: `${pct}%` }} />
+          <div className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-stone-200 sm:block">
+            <div className="h-full rounded-full bg-emerald-700 transition-all" style={{ width: `${pct}%` }} />
           </div>
           <button type="button" onClick={() => setChecked(new Set(allIds))} className={cx(T.btnGhost, 'h-8 text-xs', T.focus)}>
             Stage all
@@ -10259,7 +10817,7 @@ function TraySetup({ procedure }: { procedure: Procedure }) {
           return (
             <div key={group.id}>
               <div className="mb-2 flex items-center gap-2">
-                <Icon className="h-4 w-4 text-amber-700 dark:text-amber-400" aria-hidden />
+                <Icon className="h-4 w-4 text-amber-700" aria-hidden />
                 <h3 className={cx('text-xs font-semibold uppercase tracking-wider', T.muted)}>{group.title}</h3>
                 {groupDone && <Check className="h-4 w-4 text-emerald-600" aria-label="complete" />}
               </div>
@@ -10274,18 +10832,18 @@ function TraySetup({ procedure }: { procedure: Procedure }) {
                         role="checkbox"
                         aria-checked={on}
                         onClick={() => toggle(key)}
-                        className={cx('flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-amber-50/70 dark:hover:bg-stone-800/60', T.focus)}
+                        className={cx('flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-amber-50', T.focus)}
                       >
                         <span
                           className={cx(
                             'mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border transition',
-                            on ? 'border-emerald-700 bg-emerald-700 text-white dark:border-emerald-500 dark:bg-emerald-500' : 'border-stone-300 bg-white dark:border-stone-600 dark:bg-stone-900',
+                            on ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-stone-300 bg-white',
                           )}
                         >
                           {on && <Check className="h-3 w-3" strokeWidth={3} />}
                         </span>
                         <span className="min-w-0">
-                          <span className={cx('block text-sm', on ? 'text-stone-400 line-through dark:text-stone-500' : T.body)}>{item.label}</span>
+                          <span className={cx('block text-sm', on ? 'text-stone-600 line-through' : T.body)}>{item.label}</span>
                           {item.detail && <span className={cx('block text-xs', T.muted)}>{item.detail}</span>}
                         </span>
                       </button>
@@ -10345,7 +10903,7 @@ function ProtocolSteps({
               key={step.id}
               className={cx(
                 'rounded-2xl border transition',
-                isDone ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-500/20 dark:bg-emerald-500/5' : 'border-stone-200/80 bg-white/60 dark:border-stone-800 dark:bg-stone-900/40',
+                isDone ? 'border-emerald-200 bg-emerald-50' : 'border-stone-300 bg-white',
               )}
             >
               <div className="flex items-start gap-3 p-3.5">
@@ -10356,8 +10914,8 @@ function ProtocolSteps({
                   className={cx(
                     'grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-semibold tabular-nums ring-1 ring-inset transition active:scale-95',
                     isDone
-                      ? 'bg-emerald-700 text-white ring-emerald-700 dark:bg-emerald-500 dark:text-stone-950'
-                      : 'bg-[#FDFBF7] text-stone-700 ring-stone-300 hover:ring-amber-500 dark:bg-stone-900 dark:text-stone-200 dark:ring-stone-700',
+                      ? 'bg-emerald-700 text-white ring-emerald-700'
+                      : 'bg-white text-stone-700 ring-stone-300 hover:ring-amber-500',
                     T.focus,
                   )}
                 >
@@ -10372,13 +10930,13 @@ function ProtocolSteps({
                     {(step.checkpoint || step.warning || (step.timerIds?.length ?? 0) > 0) && (
                       <div className="mt-1.5 flex flex-wrap gap-1">
                         {step.checkpoint && (
-                          <Badge className="bg-amber-50 text-amber-800 ring-amber-600/25 dark:bg-amber-500/10 dark:text-amber-300">
+                          <Badge className="bg-amber-50 text-amber-800 ring-amber-600/25">
                             <ShieldCheck className="h-3 w-3" aria-hidden />
                             Checkpoint
                           </Badge>
                         )}
                         {step.warning && (
-                          <Badge className="bg-rose-50 text-rose-800 ring-rose-700/25 dark:bg-rose-500/10 dark:text-rose-300">
+                          <Badge className="bg-rose-50 text-rose-800 ring-rose-700/25">
                             <AlertTriangle className="h-3 w-3" aria-hidden />
                             Caution
                           </Badge>
@@ -10394,7 +10952,7 @@ function ProtocolSteps({
                       </div>
                     )}
                   </div>
-                  <ChevronDown className={cx('mt-1 h-4 w-4 shrink-0 text-stone-400 transition-transform', isOpen && 'rotate-180')} aria-hidden />
+                  <ChevronDown className={cx('mt-1 h-4 w-4 shrink-0 text-stone-600 transition-transform', isOpen && 'rotate-180')} aria-hidden />
                 </button>
               </div>
               {isOpen && (
@@ -10402,7 +10960,7 @@ function ProtocolSteps({
                   <ul className="space-y-1.5">
                     {step.details.map((d) => (
                       <li key={d} className={cx('flex gap-2 text-sm leading-relaxed', T.body)}>
-                        <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                        <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-700" aria-hidden />
                         {d}
                       </li>
                     ))}
@@ -10425,10 +10983,10 @@ function ProtocolSteps({
                             className={cx(
                               'inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold transition active:scale-[0.97]',
                               state.running
-                                ? 'border-stone-900 bg-stone-900 text-amber-50 dark:border-amber-400 dark:bg-amber-400 dark:text-stone-950'
+                                ? 'border-stone-900 bg-stone-900 text-amber-50'
                                 : state.done
-                                  ? 'border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-500/10 dark:text-rose-200'
-                                  : 'border-stone-200 bg-white text-stone-700 hover:border-amber-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200',
+                                  ? 'border-rose-300 bg-rose-50 text-rose-800'
+                                  : 'border-stone-300 bg-white text-stone-700 hover:border-amber-400',
                               T.focus,
                             )}
                           >
@@ -10458,7 +11016,7 @@ function TimerRing({ state, tone, size }: { state: TimerState; tone: TimerTone; 
   const warning = state.running && state.remaining <= Math.min(5, state.total * 0.25);
   return (
     <svg viewBox={`0 0 ${size} ${size}`} className="-rotate-90" style={{ width: size, height: size }} aria-hidden>
-      <circle cx={size / 2} cy={size / 2} r={r} className="fill-none stroke-stone-200 dark:stroke-stone-800" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} className="fill-none stroke-stone-200" strokeWidth={stroke} />
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -10481,12 +11039,12 @@ function TimerCard({ preset, state, api }: { preset: TimerPreset; state: TimerSt
       className={cx(
         'flex items-center gap-3 rounded-2xl border p-3 transition',
         state.done
-          ? 'animate-pulse border-rose-300 bg-rose-50 ring-2 ring-rose-300 dark:border-rose-500/40 dark:bg-rose-500/10 dark:ring-rose-500/40'
+          ? 'animate-pulse border-rose-300 bg-rose-50 ring-2 ring-rose-300'
           : warning
-            ? 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'
+            ? 'border-amber-300 bg-amber-50'
             : state.running
-              ? 'border-stone-300 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900'
-              : 'border-stone-200/80 bg-white/50 dark:border-stone-800 dark:bg-stone-900/40',
+              ? 'border-stone-300 bg-white shadow-sm'
+              : 'border-stone-300 bg-white',
       )}
       role="timer"
       aria-live={state.done ? 'assertive' : 'off'}
@@ -10496,7 +11054,7 @@ function TimerCard({ preset, state, api }: { preset: TimerPreset; state: TimerSt
         <span
           className={cx(
             'absolute inset-0 grid place-items-center font-mono text-sm font-bold tabular-nums',
-            state.done ? 'text-rose-700 dark:text-rose-300' : warning ? 'text-amber-700 dark:text-amber-300' : T.strong,
+            state.done ? 'text-rose-700' : warning ? 'text-amber-700' : T.strong,
           )}
         >
           {state.done ? <Bell className="h-5 w-5" aria-label="Complete" /> : formatClock(state.remaining)}
@@ -10525,7 +11083,7 @@ function TimerRail({ presets, api }: { presets: TimerPreset[]; api: TimerApi }) 
     <section id="timers" className={cx('scroll-mt-44', T.card)}>
       <div className={cx('flex items-center justify-between border-b px-4 py-3', T.divider)}>
         <div className="flex items-center gap-2">
-          <Timer className="h-4 w-4 text-amber-700 dark:text-amber-400" aria-hidden />
+          <Timer className="h-4 w-4 text-amber-700" aria-hidden />
           <h2 className={cx('text-sm font-semibold', T.strong)}>Chairside timers</h2>
         </div>
         <button type="button" onClick={api.resetAll} className={cx(T.btnGhost, 'h-7 text-xs', T.focus)}>
@@ -10547,17 +11105,17 @@ function TimerRail({ presets, api }: { presets: TimerPreset[]; api: TimerApi }) 
 function SpecCell({ column, value }: { column: string; value: string }) {
   const c = column.toLowerCase();
   if (c === 'ideal' || c === 'specification') {
-    return <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200">{value}</span>;
+    return <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-900">{value}</span>;
   }
-  if (c === 'minimum') return <span className="font-medium text-orange-800 dark:text-orange-300">{value}</span>;
+  if (c === 'minimum') return <span className="font-medium text-orange-800">{value}</span>;
   if (c === 'instrument') return <span className={cx('font-mono text-xs', T.body)}>{value}</span>;
   if (c === 'source') {
     return (
       <Badge
         className={
           value.toLowerCase().startsWith('manual')
-            ? 'bg-amber-50 text-amber-800 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-300'
-            : 'bg-stone-100 text-stone-600 ring-stone-500/20 dark:bg-stone-800 dark:text-stone-300'
+            ? 'bg-amber-50 text-amber-800 ring-amber-600/20'
+            : 'bg-stone-100 text-stone-600 ring-stone-500/20'
         }
       >
         {value}
@@ -10576,7 +11134,7 @@ function SpecTables({ tables }: { tables: SpecTable[] }) {
             {tables.length > 1 && <h3 className={cx('mb-2 text-xs font-semibold uppercase tracking-wider', T.muted)}>{table.title}</h3>}
             {table.note && (
               <p className={cx('mb-3 flex items-start gap-2 text-xs', T.muted)}>
-                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" aria-hidden />
                 {table.note}
               </p>
             )}
@@ -10591,7 +11149,7 @@ function SpecTables({ tables }: { tables: SpecTable[] }) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-stone-200/70 dark:divide-stone-800">
+                <tbody className="divide-y divide-stone-300">
                   {table.rows.map((row) => (
                     <tr key={row.join('|')} className={T.row}>
                       {row.map((cell, ci) =>
@@ -10629,14 +11187,14 @@ function DiagramGallery({ keys }: { keys: DiagramKey[] }) {
                 <p className={cx('text-sm font-semibold', T.strong)}>{d.title}</p>
                 <p className={cx('text-xs', T.muted)}>{d.caption}</p>
               </div>
-              <div className="bg-white p-2 dark:bg-stone-900">
+              <div className="bg-white p-2">
                 <d.Render />
               </div>
               <figcaption className={cx('border-t px-4 py-3', T.divider)}>
                 <ol className="space-y-1.5">
                   {d.legend.map((item, i) => (
                     <li key={item} className={cx('flex gap-2 text-xs leading-snug', T.body)}>
-                      <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-amber-500 text-[10px] font-bold text-white">{i + 1}</span>
+                      <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-amber-700 text-[10px] font-bold text-white">{i + 1}</span>
                       {item}
                     </li>
                   ))}
@@ -10662,7 +11220,7 @@ function PostOpCard({ items }: { items: string[] }) {
       <ul className="space-y-1.5">
         {items.map((item) => (
           <li key={item} className={cx('flex gap-2 text-sm leading-relaxed', T.body)}>
-            <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" aria-hidden />
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
             {item}
           </li>
         ))}
@@ -10693,7 +11251,7 @@ function PearlsCard({ procedureId }: { procedureId: string }) {
       title="My chairside pearls"
       subtitle="Private notes — saved in this browser only"
       right={
-        <span className={cx('text-xs', status === 'unavailable' ? 'text-rose-700 dark:text-rose-300' : T.muted)} aria-live="polite">
+        <span className={cx('text-xs', status === 'unavailable' ? 'text-rose-700' : T.muted)} aria-live="polite">
           {status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved' : status === 'unavailable' ? 'Browser storage unavailable — not saved' : ''}
         </span>
       }
@@ -10804,7 +11362,7 @@ function OperatoryMode({
       role="dialog"
       aria-modal="true"
       aria-label={`Operatory mode: ${procedure.title}`}
-      className="fixed inset-0 z-[60] flex flex-col bg-[radial-gradient(ellipse_at_top,_#292524_0%,_#0c0a09_60%)] text-stone-100 outline-none"
+      className="fixed inset-0 z-[60] flex flex-col bg-stone-950 text-stone-100 outline-none"
     >
       <header className="flex items-center gap-4 border-b border-stone-800 px-6 py-4">
         <div className="min-w-0 flex-1">
@@ -10835,7 +11393,7 @@ function OperatoryMode({
       <main className="grid flex-1 gap-8 overflow-y-auto px-6 py-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:px-12">
         <div className="min-w-0">
           <p className="font-mono text-2xl font-semibold tabular-nums text-amber-400">
-            Step {index + 1} <span className="text-stone-500">/ {procedure.steps.length}</span>
+            Step {index + 1} <span className="text-stone-400">/ {procedure.steps.length}</span>
             {isDone && <span className="ml-4 rounded-lg bg-emerald-600 px-2 py-0.5 text-base text-white">Done</span>}
           </p>
           <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight text-stone-50 lg:text-6xl">{step.title}</h1>
@@ -10848,13 +11406,13 @@ function OperatoryMode({
             ))}
           </ul>
           {step.warning && (
-            <div className="mt-8 flex gap-4 rounded-2xl border-l-8 border-rose-500 bg-rose-500/10 p-5">
+            <div className="mt-8 flex gap-4 rounded-2xl border-l-8 border-rose-500 bg-rose-950 p-5">
               <AlertTriangle className="h-8 w-8 shrink-0 text-rose-400" aria-hidden />
               <p className="text-xl leading-snug text-rose-100">{step.warning}</p>
             </div>
           )}
           {step.checkpoint && (
-            <div className="mt-6 flex gap-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5">
+            <div className="mt-6 flex gap-4 rounded-2xl border border-amber-600 bg-amber-950 p-5">
               <ShieldCheck className="h-8 w-8 shrink-0 text-amber-400" aria-hidden />
               <div>
                 <p className="text-sm font-bold uppercase tracking-widest text-amber-300">Clinical Checkpoint</p>
@@ -10870,8 +11428,8 @@ function OperatoryMode({
               <div
                 className={cx(
                   'relative grid place-items-center rounded-full',
-                  activeState.done && 'animate-pulse ring-8 ring-rose-500/40',
-                  warning && 'ring-8 ring-amber-500/30',
+                  activeState.done && 'animate-pulse ring-8 ring-rose-600',
+                  warning && 'ring-8 ring-amber-600',
                 )}
               >
                 <TimerRing state={activeState} tone={activeTimer.tone} size={300} />
@@ -10888,7 +11446,7 @@ function OperatoryMode({
                 <button
                   type="button"
                   onClick={() => api.toggle(activeTimer.id)}
-                  className="inline-flex h-14 min-w-[160px] items-center justify-center gap-2 rounded-2xl bg-amber-500 px-6 text-lg font-bold text-stone-950 shadow-lg shadow-amber-900/40 hover:bg-amber-400 active:scale-[0.98]"
+                  className="inline-flex h-14 min-w-[160px] items-center justify-center gap-2 rounded-2xl bg-amber-500 px-6 text-lg font-bold text-stone-950 shadow-lg hover:bg-amber-400 active:scale-[0.98]"
                 >
                   {activeState.running ? <Pause className="h-6 w-6" aria-hidden /> : <Play className="h-6 w-6" aria-hidden />}
                   {activeState.running ? 'Pause' : activeState.done ? 'Restart' : 'Start'}
@@ -10913,7 +11471,7 @@ function OperatoryMode({
                         onClick={() => setTimerIdx(i)}
                         className={cx(
                           'rounded-xl border px-3 py-2 text-sm font-semibold transition',
-                          i === timerIdx ? 'border-amber-400 bg-amber-400/15 text-amber-200' : 'border-stone-700 text-stone-300 hover:bg-stone-800',
+                          i === timerIdx ? 'border-amber-400 bg-stone-800 text-amber-200' : 'border-stone-700 text-stone-300 hover:bg-stone-800',
                         )}
                       >
                         {t.label} <span className="ml-1 font-mono tabular-nums">{s?.running ? formatClock(s.remaining) : formatDuration(t.seconds)}</span>
@@ -10925,7 +11483,7 @@ function OperatoryMode({
             </>
           ) : (
             <div className="w-full rounded-3xl border border-dashed border-stone-700 p-8 text-center">
-              <Timer className="mx-auto h-10 w-10 text-stone-600" aria-hidden />
+              <Timer className="mx-auto h-10 w-10 text-stone-400" aria-hidden />
               <p className="mt-3 text-lg text-stone-400">No timed material in this step</p>
             </div>
           )}
@@ -10947,7 +11505,7 @@ function OperatoryMode({
           onClick={() => onToggleDone(step.id)}
           className={cx(
             'inline-flex h-14 items-center gap-2 rounded-2xl px-6 text-lg font-semibold',
-            isDone ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'border border-emerald-600/60 text-emerald-300 hover:bg-emerald-600/15',
+            isDone ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'border border-emerald-600 text-emerald-300 hover:bg-emerald-950',
           )}
         >
           <Check className="h-6 w-6" aria-hidden />
@@ -11079,19 +11637,18 @@ function ProcedureView({
 
   return (
     <div className="px-4 pb-32 pt-6 lg:px-8">
-      <button type="button" onClick={onBack} className={cx('mb-3 inline-flex items-center gap-1 rounded-lg py-1 pr-2 text-sm font-medium', T.muted, 'hover:text-stone-900 dark:hover:text-stone-100', T.focus)}>
+      <button type="button" onClick={onBack} className={cx('mb-3 inline-flex items-center gap-1 rounded-lg py-1 pr-2 text-sm font-medium', T.muted, 'hover:text-stone-900', T.focus)}>
         <ChevronLeft className="h-4 w-4" aria-hidden />
         All {cat.label} procedures
       </button>
       <header className={cx(T.card, 'relative overflow-hidden p-6')}>
-        <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-gradient-to-br from-amber-200/50 to-orange-300/20 blur-3xl dark:from-amber-500/10 dark:to-orange-600/5" aria-hidden />
         <div className="relative">
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={ACCENT[cat.accent].badge}>
               <cat.icon className="h-3 w-3" aria-hidden />
               {cat.label}
             </Badge>
-            <Badge className="bg-white/70 text-stone-600 ring-stone-400/25 dark:bg-stone-800 dark:text-stone-300">
+            <Badge className="bg-white text-stone-600 ring-stone-400/25">
               <Clock className="h-3 w-3" aria-hidden />
               {formatChairLong(procedure.chairTime)}
             </Badge>
@@ -11099,8 +11656,8 @@ function ProcedureView({
               <Badge
                 className={
                   toothRelevant
-                    ? 'bg-amber-500 text-white ring-amber-600 dark:text-stone-950'
-                    : 'bg-rose-50 text-rose-800 ring-rose-700/20 dark:bg-rose-500/10 dark:text-rose-300'
+                    ? 'bg-amber-700 text-white ring-amber-600'
+                    : 'bg-rose-50 text-rose-800 ring-rose-700/20'
                 }
               >
                 #{tooth.id} {toothRelevant ? 'active' : '— not typical for this tooth'}
@@ -11116,7 +11673,7 @@ function ProcedureView({
               aria-label={favorite ? 'Unpin from favorites' : 'Pin to favorites'}
               className={cx(
                 'grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition active:scale-95',
-                favorite ? 'border-amber-400 bg-amber-50 text-amber-600 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300' : 'border-stone-200 text-stone-400 hover:text-amber-600 dark:border-stone-700',
+                favorite ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-stone-300 text-stone-600 hover:text-amber-700',
                 T.focus,
               )}
             >
@@ -11126,7 +11683,7 @@ function ProcedureView({
           <p className={cx('mt-2 max-w-3xl text-sm leading-relaxed', T.body)}>{procedure.summary}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             {procedure.cdtCodes.map((c) => (
-              <span key={c.code} className={cx('inline-flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs', T.divider, 'bg-white/60 dark:bg-stone-900/60')}>
+              <span key={c.code} className={cx('inline-flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs', T.divider, 'bg-white')}>
                 <span className={cx('font-mono font-semibold', T.strong)}>{c.code}</span>
                 <span className={T.muted}>{c.descriptor}</span>
               </span>
@@ -11208,36 +11765,6 @@ const TOOLS: { id: ToolId; label: string; short: string; icon: LucideIcon; subti
 
 /* ------------------------------- Header --------------------------------- */
 
-function ThemeSwitch({ value, onChange }: { value: ThemeChoice; onChange: (t: ThemeChoice) => void }) {
-  const opts: { v: ThemeChoice; icon: LucideIcon; label: string }[] = [
-    { v: 'light', icon: Sun, label: 'Light theme' },
-    { v: 'dark', icon: Moon, label: 'Dark theme' },
-    { v: 'system', icon: Monitor, label: 'System theme' },
-  ];
-  return (
-    <div role="radiogroup" aria-label="Theme" className="hidden items-center rounded-xl bg-stone-100 p-0.5 dark:bg-stone-800/70 md:flex">
-      {opts.map((o) => (
-        <button
-          key={o.v}
-          type="button"
-          role="radio"
-          aria-checked={value === o.v}
-          aria-label={o.label}
-          title={o.label}
-          onClick={() => onChange(o.v)}
-          className={cx(
-            'grid h-8 w-8 place-items-center rounded-lg transition',
-            value === o.v ? 'bg-white text-amber-600 shadow-sm dark:bg-stone-950 dark:text-amber-300' : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100',
-            T.focus,
-          )}
-        >
-          <o.icon className="h-4 w-4" />
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function AppHeader({
   query,
   onQuery,
@@ -11252,8 +11779,6 @@ function AppHeader({
   activeCategory,
   onCategory,
   counts,
-  theme,
-  onTheme,
   tooth,
   onToothClick,
   onClearTooth,
@@ -11273,8 +11798,6 @@ function AppHeader({
   activeCategory: CategoryId | 'all';
   onCategory: (c: CategoryId | 'all') => void;
   counts: Record<CategoryId, number>;
-  theme: ThemeChoice;
-  onTheme: (t: ThemeChoice) => void;
   tooth: ToothInfo | null;
   onToothClick: () => void;
   onClearTooth: () => void;
@@ -11282,7 +11805,7 @@ function AppHeader({
   onOpenProcedure: (id: string) => void;
 }) {
   return (
-    <div className={cx('rounded-2xl shadow-lg shadow-stone-900/[0.04]', T.glass)}>
+    <div className={cx('rounded-2xl shadow-lg', T.glass)}>
       <div className="flex h-16 items-center gap-2.5 px-3 sm:px-4">
         {showIndexButton && (
           <button type="button" onClick={onOpenIndex} className={cx(T.btnGhost, 'h-9 w-9 !px-0 lg:hidden', T.focus)} aria-label="Open procedure index">
@@ -11290,7 +11813,7 @@ function AppHeader({
           </button>
         )}
         <button type="button" onClick={() => onCategory('all')} className={cx('flex items-center gap-2.5 rounded-xl', T.focus)} aria-label="Chairside home">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-amber-500 via-orange-600 to-rose-800 text-white shadow-sm shadow-orange-900/30">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-orange-700 text-white shadow-sm">
             <Stethoscope className="h-5 w-5" aria-hidden />
           </span>
           <span className="hidden text-left leading-tight lg:block">
@@ -11300,7 +11823,7 @@ function AppHeader({
         </button>
 
         <div className="relative mx-auto w-full max-w-xl">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" aria-hidden />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-600" aria-hidden />
           <input
             ref={searchRef}
             value={query}
@@ -11320,7 +11843,7 @@ function AppHeader({
             {query ? (
               <>
                 <span className={cx('text-[11px] tabular-nums', T.muted)}>{resultCount}</span>
-                <button type="button" onClick={() => onQuery('')} className="rounded p-1 text-stone-400 hover:text-stone-700" aria-label="Clear search">
+                <button type="button" onClick={() => onQuery('')} className="rounded p-1 text-stone-600 hover:text-stone-700" aria-label="Clear search">
                   <X className="h-4 w-4" />
                 </button>
               </>
@@ -11333,12 +11856,12 @@ function AppHeader({
         </div>
 
         {tooth ? (
-          <div className="hidden items-center rounded-xl border border-amber-300 bg-amber-50 pl-1 dark:border-amber-500/40 dark:bg-amber-500/10 sm:flex">
+          <div className="hidden items-center rounded-xl border border-amber-300 bg-amber-50 pl-1 sm:flex">
             <button type="button" onClick={onToothClick} className={cx('flex items-center gap-2 rounded-lg px-2 py-1', T.focus)} title={tooth.name}>
-              <span className="rounded-md bg-amber-500 px-1.5 font-mono text-sm font-bold text-white dark:text-stone-950">#{tooth.id}</span>
-              <span className="hidden max-w-[150px] truncate text-xs font-medium text-amber-900 dark:text-amber-200 xl:inline">{tooth.name}</span>
+              <span className="rounded-md bg-amber-700 px-1.5 font-mono text-sm font-bold text-white">#{tooth.id}</span>
+              <span className="hidden max-w-[150px] truncate text-xs font-medium text-amber-900 xl:inline">{tooth.name}</span>
             </button>
-            <button type="button" onClick={onClearTooth} className="grid h-8 w-7 place-items-center text-amber-700 hover:text-amber-950 dark:text-amber-300" aria-label="Clear active tooth">
+            <button type="button" onClick={onClearTooth} className="grid h-8 w-7 place-items-center text-amber-700 hover:text-amber-950" aria-label="Clear active tooth">
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -11349,7 +11872,6 @@ function AppHeader({
           </button>
         )}
 
-        <ThemeSwitch value={theme} onChange={onTheme} />
         <button
           type="button"
           onClick={onToggleSound}
@@ -11372,7 +11894,7 @@ function AppHeader({
       </div>
 
       <div className={cx('border-t px-3 py-2 sm:px-4', T.divider)}>
-        <nav className="flex gap-1 overflow-x-auto rounded-full bg-stone-100/80 p-1 [scrollbar-width:none] dark:bg-stone-900/80" aria-label="Categories">
+        <nav className="flex gap-1 overflow-x-auto rounded-full bg-stone-100 p-1 [scrollbar-width:none]" aria-label="Categories">
           <CategoryChip label="All" active={activeCategory === 'all'} accent="honey" onClick={() => onCategory('all')} />
           {CATEGORIES.map((c) => (
             <CategoryChip
@@ -11395,7 +11917,7 @@ function AppHeader({
                 type="button"
                 onClick={() => onOpenProcedure(p.id)}
                 className={cx(
-                  'shrink-0 rounded-full border border-amber-200 bg-amber-50/80 px-2.5 py-1 text-xs font-medium text-amber-900 transition hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200',
+                  'shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 transition hover:border-amber-400 hover:bg-amber-100',
                   T.focus,
                 )}
               >
@@ -11431,14 +11953,14 @@ function CategoryChip({
       aria-pressed={active}
       className={cx(
         'inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-[0.97]',
-        active ? cx(ACCENT[accent].solid, 'shadow-sm') : 'text-stone-600 hover:bg-white hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100',
+        active ? cx(ACCENT[accent].solid, 'shadow-sm') : 'text-stone-600 hover:bg-white hover:text-stone-900',
         T.focus,
       )}
     >
       {Icon && <Icon className="h-3.5 w-3.5" aria-hidden />}
       {label}
       {count !== undefined && (
-        <span className={cx('rounded-full px-1.5 text-[10px] tabular-nums', active ? 'bg-white/25' : 'bg-stone-200/80 text-stone-500 dark:bg-stone-800 dark:text-stone-400')}>{count}</span>
+        <span className={cx('rounded-full px-1.5 text-[10px] tabular-nums', active ? 'bg-white text-stone-900' : 'bg-stone-200 text-stone-700')}>{count}</span>
       )}
     </button>
   );
@@ -11486,7 +12008,7 @@ function ProcedureIndex({
                       type="button"
                       onClick={() => onSelect(p.id)}
                       aria-current={active ? 'page' : undefined}
-                      className={cx('w-full rounded-xl border-l-2 px-3 py-2 text-left transition', active ? ACCENT[g.accent].soft : 'border-transparent hover:bg-stone-100/80 dark:hover:bg-stone-800/60', T.focus)}
+                      className={cx('w-full rounded-xl border-l-2 px-3 py-2 text-left transition', active ? ACCENT[g.accent].soft : 'border-transparent hover:bg-stone-100', T.focus)}
                     >
                       <p className={cx('flex items-center gap-1.5 text-sm font-medium', active ? T.strong : T.body)}>
                         {favorites.has(p.id) && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-500" aria-label="Pinned" />}
@@ -11501,7 +12023,7 @@ function ProcedureIndex({
                           {formatChairShort(p.chairTime)}
                         </span>
                       </div>
-                      {reason && <p className="mt-1 truncate text-[11px] text-amber-700 dark:text-amber-400">Match · {reason}</p>}
+                      {reason && <p className="mt-1 truncate text-[11px] text-amber-700">Match · {reason}</p>}
                     </button>
                   </li>
                 );
@@ -11548,7 +12070,7 @@ function ProcedureCard({
         aria-label={favorite ? `Unpin ${procedure.shortTitle}` : `Pin ${procedure.shortTitle}`}
         className={cx(
           'absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-lg transition',
-          favorite ? 'text-amber-500' : 'text-stone-300 opacity-0 hover:text-amber-500 group-hover:opacity-100 focus-visible:opacity-100 dark:text-stone-600',
+          favorite ? 'text-amber-500' : 'text-stone-300 opacity-0 hover:text-amber-500 group-hover:opacity-100 focus-visible:opacity-100',
           T.focus,
         )}
       >
@@ -11558,10 +12080,10 @@ function ProcedureCard({
         {procedure.cdtCodes.slice(0, 4).map((c) => (
           <CdtBadge key={c.code} code={c.code} />
         ))}
-        {procedure.cdtCodes.length > 4 && <Badge className="bg-stone-50 text-stone-500 ring-stone-400/20 dark:bg-stone-800 dark:text-stone-400 dark:ring-stone-600/40">+{procedure.cdtCodes.length - 4}</Badge>}
+        {procedure.cdtCodes.length > 4 && <Badge className="bg-stone-50 text-stone-600 ring-stone-400/20">+{procedure.cdtCodes.length - 4}</Badge>}
       </div>
       <p className={cx('mt-3 line-clamp-3 text-sm leading-relaxed', T.body)}>{procedure.summary}</p>
-      {reason && <p className="mt-2 truncate text-[11px] text-amber-700 dark:text-amber-400">Match · {reason}</p>}
+      {reason && <p className="mt-2 truncate text-[11px] text-amber-700">Match · {reason}</p>}
       <div className="mt-auto pt-4">
         <div className={cx('flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t pt-3 text-xs', T.divider, T.muted)}>
           <span className="inline-flex items-center gap-1">
@@ -11579,7 +12101,7 @@ function ProcedureCard({
             </span>
           )}
           {checkpoints > 0 && (
-            <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
+            <span className="inline-flex items-center gap-1 text-amber-700">
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
               {checkpoints}
             </span>
@@ -11624,7 +12146,7 @@ function CategoryOverview({
   return (
     <div className="mx-auto max-w-6xl px-4 pb-32 pt-8 lg:px-8">
       <div className="flex items-start gap-4">
-        <span className={cx('grid h-14 w-14 shrink-0 place-items-center rounded-2xl shadow-sm', cat ? ACCENT[cat.accent].solid : 'bg-gradient-to-br from-amber-500 via-orange-600 to-rose-800 text-white')}>
+        <span className={cx('grid h-14 w-14 shrink-0 place-items-center rounded-2xl shadow-sm', cat ? ACCENT[cat.accent].solid : 'bg-orange-700 text-white')}>
           <Icon className="h-7 w-7" aria-hidden />
         </span>
         <div>
@@ -11639,9 +12161,9 @@ function CategoryOverview({
       </div>
 
       {tooth && (
-        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300/80 bg-amber-50/80 px-4 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
-          <span className="rounded-md bg-amber-500 px-1.5 font-mono text-sm font-bold text-white dark:text-stone-950">#{tooth.id}</span>
-          <span className="text-sm text-amber-950 dark:text-amber-100">{tooth.name}</span>
+        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-2.5">
+          <span className="rounded-md bg-amber-700 px-1.5 font-mono text-sm font-bold text-white">#{tooth.id}</span>
+          <span className="text-sm text-amber-950">{tooth.name}</span>
           <button type="button" onClick={() => onToothFilter(!toothFilter)} className={cx('ml-auto', T.btnOutline, 'h-8 text-xs', T.focus)}>
             {toothFilter ? 'Show all procedures' : `Only procedures for #${tooth.id}`}
           </button>
@@ -11674,7 +12196,7 @@ function CategoryOverview({
                 <div className="flex items-center gap-2">
                   <span className={cx('h-2 w-2 rounded-full', ACCENT[g.accent].dot)} aria-hidden />
                   <h2 className={cx('text-sm font-semibold', T.strong)}>{g.label}</h2>
-                  <span className="rounded-full bg-stone-200/70 px-1.5 text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">{g.items.length}</span>
+                  <span className="rounded-full bg-stone-200 px-1.5 text-[11px] tabular-nums text-stone-600">{g.items.length}</span>
                 </div>
                 <button type="button" onClick={() => onCategory(g.id)} className={cx(T.btnGhost, 'h-8 text-xs', T.focus)}>
                   View category
@@ -11763,7 +12285,7 @@ function SoapFlyout({ procedure, open, onClose, tooth }: { procedure: Procedure;
                 ? 'bg-emerald-700 text-white'
                 : copyState === 'error'
                   ? 'bg-rose-700 text-white'
-                  : 'bg-stone-900 text-amber-50 hover:bg-stone-800 dark:bg-amber-500 dark:text-stone-950 dark:hover:bg-amber-400',
+                  : 'bg-stone-900 text-amber-50 hover:bg-stone-800',
               T.focus,
             )}
           >
@@ -11786,14 +12308,14 @@ function SoapFlyout({ procedure, open, onClose, tooth }: { procedure: Procedure;
           />
         )}
         {tooth && toothKeys.length > 0 && (
-          <p className="flex items-center gap-2 rounded-xl border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-            <span className="rounded bg-amber-500 px-1 font-mono font-bold text-white dark:text-stone-950">#{tooth.id}</span>
+          <p className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+            <span className="rounded bg-amber-700 px-1 font-mono font-bold text-white">#{tooth.id}</span>
             Tooth{toothKeys.some((k) => INJECTION_FIELD_KEYS.includes(k)) ? ' and injection' : ''} filled from the active tooth.
           </p>
         )}
         <div className="grid gap-3 sm:grid-cols-2">
           {procedure.soap.fields.map((f) => {
-            const inputCls = cx(T.input, 'h-10', toothKeys.includes(f.key) && tooth && 'border-amber-300 dark:border-amber-500/40');
+            const inputCls = cx(T.input, 'h-10', toothKeys.includes(f.key) && tooth && 'border-amber-300');
             return (
               <FieldLabel key={f.key} label={f.label} className={f.type === 'surfaces' || f.type === 'textarea' ? 'sm:col-span-2' : undefined}>
                 {f.type === 'select' && (
@@ -11835,7 +12357,7 @@ function SoapFlyout({ procedure, open, onClose, tooth }: { procedure: Procedure;
                           }}
                           className={cx(
                             'h-10 w-11 rounded-xl font-mono text-sm font-bold ring-1 ring-inset transition',
-                            on ? 'bg-emerald-700 text-white ring-emerald-700 dark:bg-emerald-500 dark:text-stone-950' : 'bg-white text-stone-600 ring-stone-200 hover:bg-stone-50 dark:bg-stone-900 dark:text-stone-300 dark:ring-stone-700',
+                            on ? 'bg-emerald-700 text-white ring-emerald-700' : 'bg-white text-stone-600 ring-stone-200 hover:bg-stone-50',
                             T.focus,
                           )}
                         >
@@ -11853,18 +12375,18 @@ function SoapFlyout({ procedure, open, onClose, tooth }: { procedure: Procedure;
           <div className="mb-1.5 flex items-center justify-between gap-3">
             <p className={cx('text-xs font-semibold uppercase tracking-wider', T.muted)}>Preview</p>
             {missing.length > 0 ? (
-              <span className="inline-flex items-center gap-1 text-right text-xs text-amber-800 dark:text-amber-300">
+              <span className="inline-flex items-center gap-1 text-right text-xs text-amber-800">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 {missing.length} blank: {missing.map(labelFor).join(', ')}
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
                 <Check className="h-3.5 w-3.5" aria-hidden />
                 Complete
               </span>
             )}
           </div>
-          <pre className={cx('max-h-[440px] overflow-auto whitespace-pre-wrap rounded-2xl border p-4 font-mono text-xs leading-relaxed', T.divider, 'bg-white/80 text-stone-800 dark:bg-stone-900 dark:text-stone-200')}>
+          <pre className={cx('max-h-[440px] overflow-auto whitespace-pre-wrap rounded-2xl border p-4 font-mono text-xs leading-relaxed', T.divider, 'bg-white text-stone-800')}>
             {note}
           </pre>
         </div>
@@ -11878,7 +12400,7 @@ function SoapFlyout({ procedure, open, onClose, tooth }: { procedure: Procedure;
 function UtilityDock({ onOpen, active, operatoryAvailable, onOperatory }: { onOpen: (t: ToolId) => void; active: ToolId | null; operatoryAvailable: boolean; onOperatory: () => void }) {
   return (
     <nav aria-label="Chairside utility dock" className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-3">
-      <div className={cx('pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-2xl p-1 sm:gap-1 sm:p-1.5 shadow-xl shadow-stone-900/10 [scrollbar-width:none]', T.glass)}>
+      <div className={cx('pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-2xl p-1 sm:gap-1 sm:p-1.5 shadow-xl [scrollbar-width:none]', T.glass)}>
         {TOOLS.map((t) => (
           <button
             key={t.id}
@@ -11887,22 +12409,22 @@ function UtilityDock({ onOpen, active, operatoryAvailable, onOperatory }: { onOp
             aria-pressed={active === t.id}
             className={cx(
               'group flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-1.5 py-1.5 text-[10px] font-medium transition active:scale-95 min-[400px]:px-2 min-[400px]:text-[11px] sm:flex-row sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs',
-              active === t.id ? 'bg-stone-900 text-amber-50 dark:bg-amber-500 dark:text-stone-950' : 'text-stone-600 hover:bg-white hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800',
+              active === t.id ? 'bg-stone-900 text-amber-50' : 'text-stone-600 hover:bg-white hover:text-stone-900',
               T.focus,
             )}
             title={t.label}
           >
-            <t.icon className="h-[18px] w-[18px] text-amber-600 group-hover:text-amber-700 group-aria-pressed:text-amber-300 dark:text-amber-400 dark:group-aria-pressed:text-stone-950" aria-hidden />
+            <t.icon className="h-[18px] w-[18px] text-amber-700 group-hover:text-amber-700 group-aria-pressed:text-amber-300" aria-hidden />
             {t.short}
           </button>
         ))}
         {operatoryAvailable && (
           <>
-            <span className="mx-1 h-8 w-px shrink-0 bg-stone-200 dark:bg-stone-700" aria-hidden />
+            <span className="mx-1 h-8 w-px shrink-0 bg-stone-200" aria-hidden />
             <button
               type="button"
               onClick={onOperatory}
-              className={cx('flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-br from-amber-500 to-orange-700 px-3 py-2 text-xs font-semibold text-white shadow-sm active:scale-95', T.focus)}
+              className={cx('flex shrink-0 items-center gap-1.5 rounded-xl bg-orange-700 px-3 py-2 text-xs font-semibold text-white shadow-sm active:scale-95', T.focus)}
             >
               <Maximize2 className="h-4 w-4" aria-hidden />
               <span className="hidden sm:inline">Operatory</span>
@@ -11925,7 +12447,6 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
   const [indexOpen, setIndexOpen] = useState(false);
   const [tool, setTool] = useState<ToolId | null>(null);
   const [soundOn, setSoundOn] = useLocalStorage('sound', true);
-  const [theme, setTheme] = useTheme();
   const [favoriteIds, setFavoriteIds] = useLocalStorage<string[]>('favorites', []);
   const [toothId, setToothId] = useLocalStorage<string | null>('tooth', null);
   const [toothFilter, setToothFilter] = useState(true);
@@ -12008,7 +12529,6 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
 
   return (
     <div className={cx('min-h-screen font-sans antialiased [font-feature-settings:"cv11","ss01"]', T.page)}>
-      <div className="pointer-events-none fixed inset-0 -z-0 bg-[radial-gradient(60rem_40rem_at_100%_-10%,rgba(251,191,36,0.10),transparent),radial-gradient(50rem_30rem_at_-10%_10%,rgba(194,65,12,0.06),transparent)] dark:bg-[radial-gradient(60rem_40rem_at_100%_-10%,rgba(245,158,11,0.07),transparent)]" aria-hidden />
       <header ref={headerRef} className="sticky top-0 z-30 px-3 pt-3">
         <AppHeader
           query={query}
@@ -12024,8 +12544,6 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
           activeCategory={activeCategory}
           onCategory={selectCategory}
           counts={counts}
-          theme={theme}
-          onTheme={setTheme}
           tooth={tooth}
           onToothClick={() => setTool('odontogram')}
           onClearTooth={() => chooseTooth(null)}
@@ -12077,8 +12595,8 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
 
       {/* Mobile index drawer */}
       <div className={cx('fixed inset-0 z-40 lg:hidden', !indexOpen && 'pointer-events-none')} aria-hidden={!indexOpen}>
-        <div className={cx('absolute inset-0 bg-stone-950/30 transition-opacity', indexOpen ? 'opacity-100' : 'opacity-0')} onClick={() => setIndexOpen(false)} />
-        <div className={cx('absolute inset-y-0 left-0 w-80 max-w-[85vw] overflow-y-auto shadow-2xl transition-transform duration-300', 'bg-[#FDFBF7] dark:bg-stone-950', indexOpen ? 'translate-x-0' : '-translate-x-full')}>
+        <div className={cx('absolute inset-0 bg-stone-900 bg-opacity-50 transition-opacity', indexOpen ? 'opacity-100' : 'opacity-0')} onClick={() => setIndexOpen(false)} />
+        <div className={cx('absolute inset-y-0 left-0 w-80 max-w-[85vw] overflow-y-auto shadow-2xl transition-transform duration-300', 'bg-white', indexOpen ? 'translate-x-0' : '-translate-x-full')}>
           <div className={cx('flex items-center justify-between border-b px-4 py-3', T.divider)}>
             <p className={cx('text-sm font-semibold', T.strong)}>Procedures</p>
             <button type="button" onClick={() => setIndexOpen(false)} className={cx(T.btnGhost, 'h-9 w-9 !px-0')} aria-label="Close index">
