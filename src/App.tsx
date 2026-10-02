@@ -1,6 +1,17 @@
 /**
  * ChairsideProtocolApp.tsx — Clinical Workbench
  * ---------------------------------------------------------------------------
+ * Copyright (c) 2026 Cuspline LLC. All rights reserved.
+ *
+ * Proprietary and confidential. This software and its content (protocols,
+ * diagrams, calculators, templates and text) are the property of Cuspline LLC
+ * and are protected by copyright and other intellectual-property laws. No part
+ * may be copied, modified, distributed, sublicensed or used to train AI models
+ * without prior written permission from Cuspline LLC.
+ *
+ * For dental education and reference only. Not a medical device; does not
+ * provide diagnoses or treatment recommendations. See section 8b (Legal).
+ * ---------------------------------------------------------------------------
  * Interactive chairside clinical protocol reference and decision-support
  * workbench. Stack: React 18 + TypeScript + Tailwind CSS (v3.3+) + lucide-react.
  *
@@ -22,7 +33,12 @@
  *   6. SVG diagrams ......... Static schematics + interactive border-molding maps
  *   7. Workbench tools ...... Odontogram, LA calculator, cementation matrix,
  *                             endo wizard, medical risk, denture tools
+ *   7b. Lab script builder .. Guided laboratory work authorization
+ *   7c. Rx & pregnancy hub .. Prescription writer, common dental Rx, pregnancy &
+ *                             lactation reference
  *   8. Procedure workspace .. Procedure view, operatory mode, pearls/notes
+ *   8b. Legal ............... Copyright, disclaimer, Terms, Acceptable Use,
+ *                             Privacy Policy, first-use acceptance
  *   9. App shell ............ Floating header, library, SOAP flyout, dock
  *
  * Content conventions
@@ -40,16 +56,22 @@ import {
   Baby,
   Bell,
   BellOff,
+  Bed,
   BookOpen,
+  Bookmark,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleCheck,
   ClipboardCheck,
   ClipboardCopy,
+  ClipboardList,
   Clock,
   Crown,
   FileText,
+  FlaskConical,
   Gem,
   HeartPulse,
   Info,
@@ -61,11 +83,16 @@ import {
   Menu,
   Minus,
   Package,
+  Pill,
+  PackageCheck,
   Pause,
   Play,
   Plus,
+  Printer,
+  Radiation,
   RotateCcw,
   Ruler,
+  Save,
   ScanLine,
   Scissors,
   Search,
@@ -78,6 +105,7 @@ import {
   Syringe,
   Timer,
   Trash2,
+  UserRound,
   Wrench,
   X,
   Zap,
@@ -7626,6 +7654,19 @@ function useElementHeight<T extends HTMLElement>(): [React.RefObject<T>, number]
   return [ref, height];
 }
 
+/**
+ * Hosts that cannot print (e.g. sandboxed embeds) set
+ * `window.__CHAIRSIDE_NO_PRINT__ = true` before the app loads; Print buttons
+ * are then hidden and Copy remains available.
+ */
+function printAvailable(): boolean {
+  try {
+    return !(window as unknown as { __CHAIRSIDE_NO_PRINT__?: boolean }).__CHAIRSIDE_NO_PRINT__;
+  } catch {
+    return true;
+  }
+}
+
 const STORAGE_PREFIX = 'chairside.';
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -9113,7 +9154,12 @@ function Flyout({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-5">{children}</div>
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          {children}
+          <p className="mt-8 border-t border-stone-300 pt-3 text-xs leading-snug text-stone-700">
+            Educational reference only — not a diagnosis, treatment recommendation or substitute for professional judgment. Verify before any clinical use. {copyrightLine()}
+          </p>
+        </div>
         {footer && <div className={cx('border-t px-5 py-3.5', T.divider)}>{footer}</div>}
       </div>
     </div>
@@ -10774,6 +10820,3202 @@ function DentureToolsPanel() {
 
 
 /* ========================================================================== */
+/* 7b. LAB SCRIPT BUILDER                                                     */
+/*                                                                            */
+/* Self-contained feature: guided dental laboratory work authorization.      */
+/* Reuses existing primitives (tooth map, tokens, form controls, storage)    */
+/* without modifying them.                                                    */
+/* ========================================================================== */
+
+type LabCaseType = 'crown' | 'bridge' | 'veneer' | 'inlay' | 'implant' | 'complete-denture' | 'rpd' | 'guard';
+type LabToothRole = 'unit' | 'abutment' | 'pontic';
+type LabArch = 'maxillary' | 'mandibular' | 'both';
+type LabPickMode = 'units' | 'bridge' | 'implants' | 'arch' | 'arch-clasps';
+
+interface LabMaterial {
+  id: string;
+  label: string;
+  detail: string;
+  prep: string;
+  layered?: boolean;
+  ceramic?: boolean;
+}
+
+interface LabCaseDef {
+  id: LabCaseType;
+  label: string;
+  subtitle: string;
+  icon: LucideIcon;
+  pick: LabPickMode;
+  materialLabel: string;
+  materials: LabMaterial[];
+  turnaround: number;
+  returnOptions: string[];
+  enclosures: string[];
+  defaultEnclosures: string[];
+}
+
+const LAB_FIXED_ENCLOSURES = [
+  'Final impression — PVS (disinfected)',
+  'Digital scan — intraoral (sent via portal)',
+  'Opposing impression / model',
+  'Bite registration (MIP)',
+  'Shade photos with tab in frame',
+  'Stump shade photo',
+  'Pre-op model / photos',
+  'Provisional model / photos',
+  'Facebow record',
+  'Approved diagnostic wax-up / mock-up',
+];
+
+const LAB_MATERIALS_CROWN: LabMaterial[] = [
+  {
+    id: 'zr-ml',
+    label: 'Monolithic zirconia — multilayer (4Y/5Y)',
+    detail: 'Everyday posterior and premolar crowns; good esthetics with high strength.',
+    prep: 'Occlusal ≥ 1.0 mm, axial ≥ 0.8 mm, chamfer margin.',
+    ceramic: true,
+  },
+  {
+    id: 'zr-3y',
+    label: 'Monolithic zirconia — high strength (3Y)',
+    detail: 'Bruxers, limited clearance, second molars.',
+    prep: 'Occlusal ≥ 0.7–1.0 mm, axial ≥ 0.5 mm, chamfer margin.',
+    ceramic: true,
+  },
+  {
+    id: 'zr-5y',
+    label: 'Monolithic zirconia — high translucency (5Y)',
+    detail: 'Anterior and premolar esthetics; lower flexural strength.',
+    prep: 'Occlusal/incisal ≥ 1.0 mm, axial ≥ 0.8 mm, chamfer margin.',
+    ceramic: true,
+  },
+  {
+    id: 'lds',
+    label: 'Lithium disilicate — monolithic (IPS e.max CAD / Press)',
+    detail: 'Anterior to premolar esthetics; bonded or self-adhesive cementation.',
+    prep: 'Occlusal 1.5 mm (1.0 mm if adhesively bonded), axial 1.2–1.5 mm, 1.0 mm rounded shoulder.',
+    ceramic: true,
+  },
+  {
+    id: 'zr-layered',
+    label: 'Layered zirconia (porcelain on zirconia)',
+    detail: 'High-esthetic anteriors; chipping risk in function.',
+    prep: 'Occlusal/incisal 1.5–2.0 mm, axial 1.2–1.5 mm.',
+    layered: true,
+    ceramic: true,
+  },
+  {
+    id: 'pfm-hn',
+    label: 'PFM — high noble alloy',
+    detail: 'Proven long-term; porcelain chipping risk.',
+    prep: 'Occlusal 1.5–2.0 mm, facial 1.2–1.5 mm shoulder, lingual 0.5 mm chamfer.',
+    layered: true,
+    ceramic: true,
+  },
+  {
+    id: 'pfm-base',
+    label: 'PFM — base metal alloy',
+    detail: 'Lower cost; check for nickel sensitivity.',
+    prep: 'Occlusal 1.5–2.0 mm, facial 1.2–1.5 mm shoulder, lingual 0.5 mm chamfer.',
+    layered: true,
+    ceramic: true,
+  },
+  {
+    id: 'gold',
+    label: 'Full cast — high noble (gold)',
+    detail: 'Most conservative prep; excellent wear compatibility.',
+    prep: 'Occlusal 1.0–1.5 mm, axial 0.5 mm, chamfer margin.',
+  },
+];
+
+const LAB_CASES: LabCaseDef[] = [
+  {
+    id: 'crown',
+    label: 'Crown',
+    subtitle: 'Single units',
+    icon: Crown,
+    pick: 'units',
+    materialLabel: 'Crown material',
+    materials: LAB_MATERIALS_CROWN,
+    turnaround: 10,
+    returnOptions: ['Final delivery', 'Coping / framework try-in', 'Bisque-bake try-in'],
+    enclosures: LAB_FIXED_ENCLOSURES,
+    defaultEnclosures: ['Final impression — PVS (disinfected)', 'Opposing impression / model', 'Bite registration (MIP)', 'Shade photos with tab in frame'],
+  },
+  {
+    id: 'bridge',
+    label: 'Bridge',
+    subtitle: 'Fixed partial denture',
+    icon: Layers,
+    pick: 'bridge',
+    materialLabel: 'Bridge material',
+    materials: LAB_MATERIALS_CROWN.filter((m) => m.id !== 'zr-5y'),
+    turnaround: 12,
+    returnOptions: ['Final delivery', 'Framework try-in', 'Bisque-bake try-in'],
+    enclosures: LAB_FIXED_ENCLOSURES,
+    defaultEnclosures: ['Final impression — PVS (disinfected)', 'Opposing impression / model', 'Bite registration (MIP)', 'Shade photos with tab in frame'],
+  },
+  {
+    id: 'veneer',
+    label: 'Veneers',
+    subtitle: 'Anterior esthetics',
+    icon: Smile,
+    pick: 'units',
+    materialLabel: 'Veneer material',
+    materials: [
+      {
+        id: 'lds-press',
+        label: 'Lithium disilicate — pressed (IPS e.max Press)',
+        detail: 'Strong, predictable; stains/cut-back for characterization.',
+        prep: 'Facial 0.4–0.6 mm (min 0.3 mm), incisal 1.0 mm; margins in enamel where possible.',
+        ceramic: true,
+      },
+      {
+        id: 'feldspathic',
+        label: 'Feldspathic porcelain (refractory / foil)',
+        detail: 'Highest esthetics, thinnest; must be bonded to enamel.',
+        prep: 'Facial 0.3–0.5 mm, incisal 1.0–1.5 mm; enamel-bonded.',
+        layered: true,
+        ceramic: true,
+      },
+      {
+        id: 'composite-lab',
+        label: 'Lab-processed composite',
+        detail: 'Economical, repairable; less color stable.',
+        prep: 'Facial 0.5–0.7 mm, incisal 1.0 mm.',
+      },
+    ],
+    turnaround: 12,
+    returnOptions: ['Final delivery', 'Try-in (unglazed)'],
+    enclosures: LAB_FIXED_ENCLOSURES,
+    defaultEnclosures: [
+      'Final impression — PVS (disinfected)',
+      'Opposing impression / model',
+      'Bite registration (MIP)',
+      'Shade photos with tab in frame',
+      'Stump shade photo',
+      'Approved diagnostic wax-up / mock-up',
+      'Provisional model / photos',
+    ],
+  },
+  {
+    id: 'inlay',
+    label: 'Inlay / Onlay',
+    subtitle: 'Partial coverage',
+    icon: Gem,
+    pick: 'units',
+    materialLabel: 'Inlay / onlay material',
+    materials: [
+      {
+        id: 'lds-onlay',
+        label: 'Lithium disilicate (IPS e.max CAD / Press)',
+        detail: 'Adhesively bonded; esthetic.',
+        prep: 'Occlusal ≥ 1.0–1.5 mm, isthmus ≥ 1.0 mm, rounded internal angles, no bevels.',
+        ceramic: true,
+      },
+      {
+        id: 'gold-onlay',
+        label: 'Cast gold (high noble)',
+        detail: 'Long-lived; functional cusp coverage.',
+        prep: 'Occlusal 1.0–1.5 mm, bevelled margins, 2–5° taper.',
+      },
+      {
+        id: 'composite-onlay',
+        label: 'Lab-processed composite',
+        detail: 'Kind to opposing enamel; repairable.',
+        prep: 'Occlusal ≥ 1.5 mm, butt-joint margins.',
+      },
+    ],
+    turnaround: 10,
+    returnOptions: ['Final delivery'],
+    enclosures: LAB_FIXED_ENCLOSURES,
+    defaultEnclosures: ['Final impression — PVS (disinfected)', 'Opposing impression / model', 'Bite registration (MIP)', 'Shade photos with tab in frame'],
+  },
+  {
+    id: 'implant',
+    label: 'Implant crown',
+    subtitle: 'Abutment + crown',
+    icon: ScanLine,
+    pick: 'implants',
+    materialLabel: 'Crown material',
+    materials: [
+      { id: 'zr-tibase', label: 'Monolithic zirconia on Ti-base', detail: 'Screw-retained workhorse; strong, esthetic.', prep: 'Restorative space ≥ 7 mm (platform to opposing) for a Ti-base crown.', ceramic: true },
+      { id: 'lds-tibase', label: 'Lithium disilicate on Ti-base', detail: 'Premolar/anterior esthetics.', prep: 'Restorative space ≥ 7 mm; ceramic thickness ≥ 1.5 mm.', ceramic: true },
+      { id: 'zr-custom', label: 'Zirconia crown on custom abutment (cement-retained)', detail: 'When screw access is unfavourable.', prep: 'Place the crown margin ≤ 1 mm subgingival on the custom abutment.', ceramic: true },
+      { id: 'pfm-implant', label: 'PFM on custom abutment', detail: 'Traditional option.', prep: 'Restorative space ≥ 8 mm.', layered: true, ceramic: true },
+    ],
+    turnaround: 14,
+    returnOptions: ['Final delivery', 'Abutment + crown try-in', 'Custom abutment only (for try-in)'],
+    enclosures: [
+      'Implant-level impression — PVS with impression copings',
+      'Digital scan with scan body (sent via portal)',
+      'Implant analog(s)',
+      'Soft-tissue moulage on master cast',
+      'Opposing impression / model',
+      'Bite registration (MIP)',
+      'Shade photos with tab in frame',
+      'Custom healing abutment / provisional (emergence profile)',
+    ],
+    defaultEnclosures: ['Implant-level impression — PVS with impression copings', 'Implant analog(s)', 'Opposing impression / model', 'Bite registration (MIP)', 'Shade photos with tab in frame'],
+  },
+  {
+    id: 'complete-denture',
+    label: 'Complete denture',
+    subtitle: 'By stage',
+    icon: Smile,
+    pick: 'arch',
+    materialLabel: 'Denture teeth',
+    materials: [
+      { id: 'portrait', label: 'Portrait IPN (Dentsply)', detail: 'Layered IPN acrylic teeth; esthetic, wear resistant.', prep: 'Select mould from the face form and interalar width.' },
+      { id: 'premium-acrylic', label: 'Premium cross-linked acrylic teeth', detail: 'Economical.', prep: '—' },
+      { id: 'lab-choice', label: 'Lab’s choice (specify mould below)', detail: 'Use the lab’s house teeth.', prep: '—' },
+    ],
+    turnaround: 5,
+    returnOptions: ['Custom trays', 'Record bases with wax rims', 'Anterior set-up for try-in', 'Full wax set-up for try-in', 'Process & finish', 'Laboratory reline'],
+    enclosures: [
+      'Preliminary impressions (alginate) / study casts',
+      'Final impressions (border-molded)',
+      'Master casts',
+      'Wax rims with midline, smile line and canine lines marked',
+      'Jaw relation record (VDO / CR)',
+      'Facebow record',
+      'Approved wax try-in',
+      'Existing denture (reference)',
+      'Photos (smile, rest)',
+    ],
+    defaultEnclosures: ['Final impressions (border-molded)'],
+  },
+  {
+    id: 'rpd',
+    label: 'Partial denture',
+    subtitle: 'RPD framework / acrylic',
+    icon: Wrench,
+    pick: 'arch-clasps',
+    materialLabel: 'Framework material',
+    materials: [
+      { id: 'cocr', label: 'Cobalt-chromium framework (Vitallium)', detail: 'Definitive RPD framework.', prep: 'Guide planes 2–3 mm, rest seats ~1.5 mm deep, contours modified per survey.' },
+      { id: 'ti', label: 'Titanium framework', detail: 'Lightweight; for Co-Cr sensitivity.', prep: 'As for Co-Cr; confirm with lab.' },
+      { id: 'flexible', label: 'Flexible nylon (interim / allergy only)', detail: 'Not a definitive design: no rests, poor support.', prep: 'No rest seats required; limited support.' },
+    ],
+    turnaround: 10,
+    returnOptions: ['Framework try-in', 'Wax set-up for try-in (altered cast done)', 'Process & finish', 'Custom tray for altered cast'],
+    enclosures: [
+      'Final impression (PVS or alginate, poured)',
+      'Surveyed diagnostic cast with design drawn',
+      'Design drawing / form',
+      'Opposing impression / model',
+      'Bite registration / record bases',
+      'Altered-cast impression',
+      'Approved framework',
+      'Shade and mould for teeth',
+    ],
+    defaultEnclosures: ['Final impression (PVS or alginate, poured)', 'Surveyed diagnostic cast with design drawn', 'Opposing impression / model', 'Bite registration / record bases'],
+  },
+  {
+    id: 'guard',
+    label: 'Occlusal guard',
+    subtitle: 'Hard, full-arch',
+    icon: ShieldCheck,
+    pick: 'arch',
+    materialLabel: 'Guard material',
+    materials: [
+      { id: 'dual', label: 'Dual-laminate acrylic (hard outer / soft inner)', detail: 'Comfortable intaglio, hard occlusal surface.', prep: '—' },
+      { id: 'hard', label: 'Hard heat-processed acrylic', detail: 'Most durable, easiest to adjust.', prep: '—' },
+      { id: 'printed', label: '3D-printed hard resin', detail: 'Digital workflow.', prep: '—' },
+    ],
+    turnaround: 7,
+    returnOptions: ['Final delivery'],
+    enclosures: ['Alginate impressions poured in Microstone', 'Digital scans of both arches', 'Facebow record', 'Bite registration (Regisil)', 'Mounted casts'],
+    defaultEnclosures: ['Alginate impressions poured in Microstone', 'Facebow record', 'Bite registration (Regisil)'],
+  },
+];
+
+const LAB_CASE_BY_ID = Object.fromEntries(LAB_CASES.map((c) => [c.id, c])) as Record<LabCaseType, LabCaseDef>;
+
+const VITA_SHADES = ['OM1', 'OM2', 'OM3', 'A1', 'A2', 'A3', 'A3.5', 'A4', 'B1', 'B2', 'B3', 'B4', 'C1', 'C2', 'C3', 'C4', 'D2', 'D3', 'D4'];
+const STUMP_SHADES = ['ND1', 'ND2', 'ND3', 'ND4', 'ND5', 'ND6', 'ND7', 'ND8', 'ND9'];
+
+interface LabScriptState {
+  type: LabCaseType;
+  teeth: Record<string, LabToothRole>;
+  arch: LabArch;
+  material: string;
+  shade: string;
+  stumpShade: string;
+  shadeNotes: string;
+  contacts: 'Normal' | 'Light' | 'Firm';
+  occlusion: string;
+  clearance: string;
+  margin: string;
+  pontic: string;
+  metalCollar: string;
+  parafunction: boolean;
+  implantSystem: string;
+  implantPlatform: string;
+  implantRetention: 'Screw-retained' | 'Cement-retained';
+  abutment: string;
+  implantImpression: string;
+  emergence: string;
+  dentureStage: string;
+  dentureOcclusion: string;
+  mould: string;
+  baseShade: string;
+  majorConnector: string;
+  clasps: string;
+  guardThickness: string;
+  enclosures: string[];
+  instructions: string;
+  returnFor: string;
+  rush: boolean;
+  dueDate: string;
+  patientId: string;
+  age: string;
+  sex: string;
+}
+
+interface LabProfile {
+  dentist: string;
+  license: string;
+  practice: string;
+  phone: string;
+  lab: string;
+}
+
+interface LabTemplate {
+  id: string;
+  name: string;
+  state: Partial<LabScriptState>;
+}
+
+const LAB_DENTURE_STAGE_DAYS: Record<string, number> = {
+  'Custom trays': 3,
+  'Record bases with wax rims': 3,
+  'Anterior set-up for try-in': 5,
+  'Full wax set-up for try-in': 5,
+  'Process & finish': 7,
+  'Laboratory reline': 3,
+};
+
+const LAB_RPD_STAGE_DAYS: Record<string, number> = {
+  'Framework try-in': 10,
+  'Wax set-up for try-in (altered cast done)': 5,
+  'Process & finish': 7,
+  'Custom tray for altered cast': 3,
+};
+
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Adds working days (Mon–Fri) to a date. */
+function addWorkingDays(from: Date, days: number): Date {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) added += 1;
+  }
+  return d;
+}
+
+function formatLongDate(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || '______';
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function labTurnaround(s: LabScriptState): number {
+  const c = LAB_CASE_BY_ID[s.type];
+  let days = c.turnaround;
+  if (s.type === 'complete-denture') days = LAB_DENTURE_STAGE_DAYS[s.dentureStage] ?? days;
+  if (s.type === 'rpd') days = LAB_RPD_STAGE_DAYS[s.returnFor] ?? days;
+  return s.rush ? Math.max(2, Math.ceil(days / 2)) : days;
+}
+
+function suggestedDueDate(s: LabScriptState, today: Date): string {
+  return isoDate(addWorkingDays(today, labTurnaround(s)));
+}
+
+function defaultLabState(type: LabCaseType, toothId: string | null, today: Date): LabScriptState {
+  const c = LAB_CASE_BY_ID[type];
+  const t = toothInfo(toothId);
+  const teeth: Record<string, LabToothRole> = {};
+  if (t && !t.primary && (c.pick === 'units' || c.pick === 'implants')) teeth[t.id] = 'unit';
+  if (t && !t.primary && c.pick === 'bridge') teeth[t.id] = 'abutment';
+  const base: LabScriptState = {
+    type,
+    teeth,
+    arch: t ? t.arch : 'maxillary',
+    material: c.materials[0].id,
+    shade: '',
+    stumpShade: '',
+    shadeNotes: '',
+    contacts: 'Normal',
+    occlusion: 'Light contact in MIP, clear in excursions',
+    clearance: 'Call me before proceeding',
+    margin: 'As prepared — please mark margins',
+    pontic: 'Modified ridge lap',
+    metalCollar: 'Porcelain butt margin facial, 1–2 mm metal collar lingual',
+    parafunction: false,
+    implantSystem: '',
+    implantPlatform: '',
+    implantRetention: 'Screw-retained',
+    abutment: 'Ti-base (manufacturer’s original)',
+    implantImpression: 'Closed tray (transfer)',
+    emergence: 'Match the provisional / healing contour',
+    dentureStage: c.id === 'complete-denture' ? c.returnOptions[0] : '',
+    dentureOcclusion: 'Lingualized',
+    mould: '',
+    baseShade: 'Light pink (standard)',
+    majorConnector: '',
+    clasps: '',
+    guardThickness: '2 mm at the thinnest point',
+    enclosures: [...c.defaultEnclosures],
+    instructions: '',
+    returnFor: c.returnOptions[0],
+    rush: false,
+    dueDate: '',
+    patientId: '',
+    age: '',
+    sex: '',
+  };
+  if (type === 'rpd') base.majorConnector = t?.arch === 'mandibular' ? 'Lingual bar' : 'Anterior–posterior palatal strap';
+  base.dueDate = suggestedDueDate(base, today);
+  return base;
+}
+
+/** Procedure pages that map to a lab case type and stage. */
+const LAB_PRESET_BY_PROCEDURE: Record<string, { type: LabCaseType; stage?: string }> = {
+  'crown-preparation': { type: 'crown' },
+  'crown-final-impression': { type: 'crown' },
+  'digital-prep-scan': { type: 'crown' },
+  'emax-crown-prep': { type: 'crown' },
+  'implant-level-impression': { type: 'implant' },
+  'cd-1-exam-preliminary-impressions': { type: 'complete-denture', stage: 'Custom trays' },
+  'cd-2-border-molding-final-impression': { type: 'complete-denture', stage: 'Record bases with wax rims' },
+  'cd-3-wax-rims-jaw-relations': { type: 'complete-denture', stage: 'Anterior set-up for try-in' },
+  'cd-4-anterior-try-in': { type: 'complete-denture', stage: 'Full wax set-up for try-in' },
+  'cd-5-posterior-try-in': { type: 'complete-denture', stage: 'Process & finish' },
+  'cd-8-lab-reline': { type: 'complete-denture', stage: 'Laboratory reline' },
+  'rpd-survey-design': { type: 'rpd', stage: 'Framework try-in' },
+  'rpd-framework-tryin-altered-cast': { type: 'rpd', stage: 'Wax set-up for try-in (altered cast done)' },
+  'occlusal-guard': { type: 'guard' },
+};
+
+/* ------------------------------ Tooth logic ----------------------------- */
+
+const LAB_ARCH_ORDER: Record<'maxillary' | 'mandibular', string[]> = { maxillary: ADULT_UPPER, mandibular: ADULT_LOWER };
+
+/** Ascending tooth numbers, as dentists write spans (#18–#20). */
+function sortedTeeth(teeth: Record<string, LabToothRole>): string[] {
+  return Object.keys(teeth).sort((a, b) => Number(a) - Number(b));
+}
+
+interface BridgeAnalysis {
+  valid: boolean;
+  units: number;
+  abutments: string[];
+  pontics: string[];
+  issues: string[];
+  cantilever: boolean;
+  hasMolar: boolean;
+}
+
+function analyzeBridge(teeth: Record<string, LabToothRole>): BridgeAnalysis {
+  const ids = sortedTeeth(teeth);
+  const infos = ids.map((id) => toothInfo(id)).filter((t): t is ToothInfo => t !== null);
+  const abutments = ids.filter((id) => teeth[id] === 'abutment');
+  const pontics = ids.filter((id) => teeth[id] === 'pontic');
+  const issues: string[] = [];
+  const arches = new Set(infos.map((t) => t.arch));
+  if (ids.length === 0) return { valid: false, units: 0, abutments, pontics, issues: ['Select abutments and pontics'], cantilever: false, hasMolar: false };
+  if (arches.size > 1) issues.push('A bridge must be in one arch');
+  const arch = infos[0].arch;
+  const order = LAB_ARCH_ORDER[arch];
+  const idx = ids.map((id) => order.indexOf(id)).sort((a, b) => a - b);
+  for (let i = 1; i < idx.length; i++) {
+    if (idx[i] !== idx[i - 1] + 1) {
+      issues.push(`Gap in the span between #${order[idx[i - 1]]} and #${order[idx[i]]} — mark the missing tooth as a pontic`);
+      break;
+    }
+  }
+  if (pontics.length === 0) issues.push('No pontic marked (tap a tooth twice to make it a pontic)');
+  if (abutments.length === 0) issues.push('No abutment marked');
+  const first = ids.length ? teeth[order[idx[0]]] : undefined;
+  const last = ids.length ? teeth[order[idx[idx.length - 1]]] : undefined;
+  const cantilever = abutments.length > 0 && pontics.length > 0 && (first === 'pontic' || last === 'pontic');
+  return {
+    valid: issues.length === 0,
+    units: ids.length,
+    abutments,
+    pontics,
+    issues,
+    cantilever,
+    hasMolar: infos.some((t) => t.type === 'molar'),
+  };
+}
+
+/* ------------------------------ Validation ------------------------------ */
+
+interface LabChecks {
+  missing: string[];
+  warnings: string[];
+}
+
+function labChecks(s: LabScriptState, profile: LabProfile): LabChecks {
+  const c = LAB_CASE_BY_ID[s.type];
+  const mat = c.materials.find((m) => m.id === s.material);
+  const missing: string[] = [];
+  const warnings: string[] = [];
+  const toothCount = Object.keys(s.teeth).length;
+
+  if ((c.pick === 'units' || c.pick === 'implants') && toothCount === 0) missing.push('Select the tooth / site number(s)');
+  if (c.pick === 'bridge') analyzeBridge(s.teeth).issues.forEach((i) => missing.push(i));
+  if (mat?.ceramic || c.id === 'complete-denture' || c.id === 'rpd') {
+    if (!s.shade) missing.push(c.id === 'complete-denture' || c.id === 'rpd' ? 'Tooth shade' : 'Shade');
+  }
+  if (c.id === 'implant') {
+    if (!s.implantSystem.trim()) missing.push('Implant system');
+    if (!s.implantPlatform.trim()) missing.push('Implant platform / diameter');
+  }
+  if (c.id === 'complete-denture' && !s.mould.trim() && s.dentureStage !== 'Custom trays' && s.dentureStage !== 'Record bases with wax rims' && s.dentureStage !== 'Laboratory reline') {
+    missing.push('Tooth mould');
+  }
+  if (s.enclosures.length === 0) missing.push('At least one enclosure (impression, scan or model)');
+  if (!s.dueDate) missing.push('Return date');
+  if (!s.patientId.trim()) missing.push('Patient identifier (chart # or initials)');
+  if (!profile.dentist.trim()) missing.push('Prescriber name');
+  if (!profile.license.trim()) missing.push('License number (required on a lab prescription in most states)');
+
+  // Clinical warnings
+  if (c.id === 'bridge') {
+    const b = analyzeBridge(s.teeth);
+    if (s.material === 'lds' && (b.units > 3 || b.hasMolar)) {
+      warnings.push('Lithium disilicate bridges are limited to 3 units with the second premolar as the most distal abutment. Use zirconia or PFM for this span.');
+    }
+    if (b.cantilever) warnings.push('Cantilever pontic: keep to one unit, prefer two splinted abutments, and keep the pontic out of excursive contact.');
+    if (b.pontics.length >= 3) warnings.push('Long span (3+ pontics): confirm connector dimensions and material with the lab before fabrication.');
+    if (b.valid) {
+      const conn = s.material === 'lds' ? '≥ 16 mm² (posterior), ≥ 12 mm² (anterior)' : s.material.startsWith('zr') ? '≥ 9 mm² (monolithic zirconia)' : 'per alloy/lab guidance';
+      warnings.push(`Connector size: ${conn}. Ask the lab to call if the vertical space does not allow it.`);
+    }
+  }
+  if (s.parafunction && mat?.layered) {
+    warnings.push('Parafunction with a layered material: consider monolithic zirconia/lithium disilicate or a metal occlusal surface, and plan an occlusal guard.');
+  }
+  if (c.id === 'implant' && s.implantRetention === 'Cement-retained') {
+    warnings.push('Cement-retained implant crown: residual cement is linked to peri-implantitis. Use a custom abutment with the margin ≤ 1 mm subgingival, minimal cement and a cementation replica — or choose screw-retained.');
+  }
+  if (c.id === 'implant' && !s.enclosures.some((e) => /analog|scan body/i.test(e))) {
+    warnings.push('No implant analog or scan body listed in the enclosures.');
+  }
+  if (c.id === 'veneer' && !s.enclosures.some((e) => /wax-up|mock-up/i.test(e))) {
+    warnings.push('Veneers: send the approved wax-up / mock-up (or provisional model) so the lab copies approved length and contour.');
+  }
+  if (c.id === 'rpd' && s.material === 'flexible') {
+    warnings.push('Flexible nylon partials are interim/allergy solutions only: no rests, poor support and hard to reline.');
+  }
+  if (mat?.ceramic && !s.stumpShade && (s.material === 'lds' || s.material === 'lds-press' || s.material === 'lds-onlay' || s.material === 'zr-5y' || s.material === 'feldspathic')) {
+    warnings.push('Translucent ceramic: record the stump shade (IPS Natural Die Material) so the lab can compensate for a dark prep.');
+  }
+  if (s.enclosures.some((e) => /PVS/.test(e)) && s.enclosures.some((e) => /Digital scan/.test(e))) {
+    warnings.push('Both a PVS impression and a digital scan are listed — tell the lab which to use as the master.');
+  }
+  if (s.rush) warnings.push('Rush case: call the lab to confirm they can meet the date (rush fees may apply).');
+  return { missing, warnings };
+}
+
+/* ---------------------------- Script builder ---------------------------- */
+
+function teethLine(s: LabScriptState): string {
+  const c = LAB_CASE_BY_ID[s.type];
+  const ids = sortedTeeth(s.teeth);
+  if (c.pick === 'bridge') {
+    const b = analyzeBridge(s.teeth);
+    const span = ids.map((id) => `#${id}${s.teeth[id] === 'pontic' ? ' (pontic)' : ''}`).join(' – ');
+    return `${b.units}-unit bridge: ${span || '______'}\nAbutments: ${b.abutments.map((x) => '#' + x).join(', ') || '—'} · Pontics: ${b.pontics.map((x) => '#' + x).join(', ') || '—'}`;
+  }
+  if (c.pick === 'arch' || c.pick === 'arch-clasps') {
+    const archText = s.arch === 'both' ? 'Maxillary and mandibular' : s.arch === 'maxillary' ? 'Maxillary' : 'Mandibular';
+    const clasps = c.pick === 'arch-clasps' && ids.length ? `\nAbutment / clasp teeth: ${ids.map((x) => '#' + x).join(', ')}` : '';
+    return `Arch: ${archText}${clasps}`;
+  }
+  const label = c.pick === 'implants' ? 'Implant site' : 'Tooth';
+  return `${label}${ids.length === 1 ? '' : 's'}: ${ids.map((x) => '#' + x).join(', ') || '______'}${ids.length > 1 ? ` (${ids.length} units)` : ''}`;
+}
+
+function buildLabScript(s: LabScriptState, profile: LabProfile, today: Date): string {
+  const c = LAB_CASE_BY_ID[s.type];
+  const mat = c.materials.find((m) => m.id === s.material);
+  const lines: string[] = [];
+  const sec = (title: string) => {
+    lines.push('');
+    lines.push(title.toUpperCase());
+  };
+  const row = (label: string, value: string) => {
+    if (value && value.trim()) lines.push(`${label}: ${value.trim()}`);
+  };
+
+  lines.push('DENTAL LABORATORY WORK AUTHORIZATION');
+  lines.push(`Date: ${formatLongDate(isoDate(today))}    Return by: ${formatLongDate(s.dueDate)}${s.rush ? '  *** RUSH ***' : ''}`);
+  row('Laboratory', profile.lab || '______');
+  lines.push(`Prescriber: ${profile.dentist || '______'}    License #: ${profile.license || '______'}`);
+  row('Practice', [profile.practice, profile.phone].filter(Boolean).join(' · '));
+  lines.push(`Patient: ${s.patientId || '______'}${s.age ? ` · Age ${s.age}` : ''}${s.sex ? ` · ${s.sex}` : ''}`);
+
+  sec(`Case: ${c.label}${c.id === 'complete-denture' || c.id === 'rpd' ? ` — ${s.returnFor}` : ''}`);
+  lines.push(teethLine(s));
+  row(c.materialLabel, mat?.label ?? '');
+
+  if (c.id === 'crown' || c.id === 'bridge' || c.id === 'veneer' || c.id === 'inlay' || c.id === 'implant') {
+    sec('Shade & esthetics');
+    row('Shade', s.shade || '______');
+    row('Stump shade', s.stumpShade);
+    row('Notes', s.shadeNotes);
+
+    sec('Design');
+    if (c.id !== 'implant') row('Margins', s.margin);
+    row('Proximal contacts', s.contacts === 'Normal' ? 'Normal (floss snaps through)' : s.contacts === 'Light' ? 'Light' : 'Firm');
+    row('Occlusion', s.occlusion);
+    if (c.id === 'bridge') row('Pontic design', s.pontic);
+    if ((s.material === 'pfm-hn' || s.material === 'pfm-base') && (c.id === 'crown' || c.id === 'bridge')) row('Metal–ceramic design', s.metalCollar);
+    if (c.id !== 'implant' && c.id !== 'veneer') row('If occlusal clearance is insufficient', s.clearance);
+    if (s.parafunction) lines.push('Parafunction present: maximise material thickness occlusally; flatten cusp inclines; avoid excursive interferences.');
+  }
+
+  if (c.id === 'implant') {
+    sec('Implant');
+    row('System', s.implantSystem || '______');
+    row('Platform / diameter', s.implantPlatform || '______');
+    row('Retention', s.implantRetention);
+    row('Abutment', s.abutment);
+    row('Impression', s.implantImpression);
+    row('Emergence profile', s.emergence);
+    lines.push('Return all implant components (analogs, copings / scan bodies, screws) with the case.');
+  }
+
+  if (c.id === 'complete-denture') {
+    sec('Denture details');
+    row('Stage requested', s.dentureStage);
+    row('Teeth', mat?.label ?? '');
+    row('Mould', s.mould);
+    row('Tooth shade', s.shade);
+    row('Occlusal scheme', s.dentureOcclusion);
+    row('Base shade', s.baseShade);
+    if (s.dentureStage === 'Record bases with wax rims') {
+      lines.push('Stabilized record bases with wax rims: maxillary rim ~22 mm from the vestibule; mandibular rim to ⅔ retromolar pad height.');
+    }
+    if (s.dentureStage === 'Custom trays') lines.push('Custom trays with wax spacer; borders 2–3 mm short of the vestibule; stable handles.');
+    if (s.dentureStage === 'Process & finish') lines.push('Process to the approved try-in; transfer the posterior palatal seal; remount and correct occlusion before finishing.');
+  }
+
+  if (c.id === 'rpd') {
+    sec('Partial denture details');
+    row('Stage requested', s.returnFor);
+    row('Major connector', s.majorConnector);
+    row('Clasp design', s.clasps);
+    row('Tooth shade', s.shade);
+    row('Mould', s.mould);
+    lines.push('Follow the design drawn on the surveyed cast; call before altering any rest or clasp position.');
+  }
+
+  if (c.id === 'guard') {
+    sec('Guard details');
+    lines.push('Full-arch flat-plane hard occlusal guard.');
+    row('Thickness', s.guardThickness);
+    lines.push('Please achieve: (a) point-to-flat-plane contacts in centric; (b) 1–2 mm freedom in centric; (c) minimal incisal guidance with posterior disclusion in protrusion; (d) canine guidance in lateral excursions.');
+    lines.push('Articulator: open to at least 1 mm clearance between canine tips and all posterior teeth in eccentric movements.');
+  }
+
+  sec('Enclosures');
+  if (s.enclosures.length === 0) lines.push('☐ ______');
+  s.enclosures.forEach((e) => lines.push(`☑ ${e}`));
+
+  if (s.instructions.trim()) {
+    sec('Additional instructions');
+    lines.push(s.instructions.trim());
+  }
+  if (c.id !== 'complete-denture' && c.id !== 'rpd') {
+    lines.push('');
+    row('Return for', s.returnFor);
+  }
+  lines.push('');
+  lines.push('Prescriber signature: ______________________    Date: ____________');
+  return lines.join('\n');
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function printLabScript(text: string, title: string): boolean {
+  try {
+    const w = window.open('', '_blank', 'width=820,height=1000');
+    if (!w) return false;
+    w.document.write(
+      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
+        '<style>body{margin:36px;color:#111;font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}' +
+        'pre{white-space:pre-wrap;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace}</style></head>' +
+        `<body><pre>${escapeHtml(text)}</pre></body></html>`,
+    );
+    w.document.close();
+    w.focus();
+    w.print();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* ------------------------------ UI pieces ------------------------------- */
+
+function LabSection({ n, title, hint, children }: { n: number; title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section className={cx(T.card, 'p-4')}>
+      <div className="mb-3 flex items-baseline gap-2.5">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-stone-900 text-xs font-bold text-white">{n}</span>
+        <h3 className={cx('text-sm font-semibold', T.strong)}>{title}</h3>
+        {hint && <span className={cx('text-xs', T.muted)}>{hint}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function LabToothPicker({
+  mode,
+  teeth,
+  onChange,
+}: {
+  mode: LabPickMode;
+  teeth: Record<string, LabToothRole>;
+  onChange: (next: Record<string, LabToothRole>) => void;
+}) {
+  const upper = archLayout(ADULT_UPPER, true, 320, 205, 262, 158, 1);
+  const lower = archLayout(ADULT_LOWER, false, 320, 235, 262, 158, 1);
+  const toggle = (id: string) => {
+    const next = { ...teeth };
+    const role = next[id];
+    if (mode === 'bridge') {
+      if (!role) next[id] = 'abutment';
+      else if (role === 'abutment') next[id] = 'pontic';
+      else delete next[id];
+    } else if (role) delete next[id];
+    else next[id] = 'unit';
+    onChange(next);
+  };
+  const render = ({ t, x, y, rot, w, h }: ReturnType<typeof archLayout>[number]) => {
+    const role = teeth[t.id];
+    const fill = role === 'abutment' ? 'fill-stone-900' : role === 'unit' ? 'fill-amber-700' : role === 'pontic' ? 'fill-amber-100' : 'fill-white';
+    const stroke = role === 'pontic' ? 'stroke-amber-800' : role ? 'stroke-stone-900' : 'stroke-stone-400';
+    const text = role === 'pontic' ? 'fill-amber-900' : role ? 'fill-white' : 'fill-stone-700';
+    const label = role === 'abutment' ? 'abutment' : role === 'pontic' ? 'pontic' : role === 'unit' ? 'selected' : 'not selected';
+    return (
+      <g
+        key={t.id}
+        role="button"
+        tabIndex={0}
+        aria-pressed={Boolean(role)}
+        aria-label={`Tooth ${t.id}, ${t.name}, ${label}`}
+        onClick={() => toggle(t.id)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle(t.id);
+          }
+        }}
+        className="group cursor-pointer outline-none"
+        transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`}
+      >
+        <rect
+          x={-w / 2}
+          y={-h / 2}
+          width={w}
+          height={h}
+          rx={t.type === 'molar' ? 11 : 9}
+          transform={`rotate(${rot.toFixed(1)})`}
+          className={cx(fill, stroke, !role && 'group-hover:fill-amber-50', 'group-focus-visible:stroke-amber-700')}
+          strokeWidth={role ? 2.5 : 1.5}
+          strokeDasharray={role === 'pontic' ? '4 3' : undefined}
+        />
+        <text textAnchor="middle" dominantBaseline="central" className={cx('pointer-events-none select-none text-[11px] font-bold tabular-nums', text)}>
+          {t.id}
+        </text>
+      </g>
+    );
+  };
+  return (
+    <div>
+      <svg viewBox="0 0 640 440" className="h-auto w-full" role="group" aria-label="Select teeth for the lab case">
+        <text x={320} y={150} textAnchor="middle" className="fill-stone-600 text-[11px] font-semibold uppercase tracking-[0.2em]">
+          Maxillary
+        </text>
+        <text x={320} y={300} textAnchor="middle" className="fill-stone-600 text-[11px] font-semibold uppercase tracking-[0.2em]">
+          Mandibular
+        </text>
+        <text x={24} y={224} className="fill-stone-600 text-[10px] font-medium uppercase tracking-wider">
+          Pt right
+        </text>
+        <text x={616} y={224} textAnchor="end" className="fill-stone-600 text-[10px] font-medium uppercase tracking-wider">
+          Pt left
+        </text>
+        {upper.map(render)}
+        {lower.map(render)}
+      </svg>
+      <div className={cx('mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs', T.body)}>
+        {mode === 'bridge' ? (
+          <>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded bg-stone-900" aria-hidden /> Abutment (tap once)
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-3 w-3 rounded border-2 border-dashed border-amber-800 bg-amber-100" aria-hidden /> Pontic (tap twice)
+            </span>
+            <span>Tap a third time to clear.</span>
+          </>
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded bg-amber-700" aria-hidden />
+            {mode === 'implants' ? 'Implant site' : mode === 'arch-clasps' ? 'Abutment / clasp tooth (optional)' : 'Selected tooth'} — tap to toggle
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LabSelect({ label, value, onChange, options, className }: { label: string; value: string; onChange: (v: string) => void; options: string[]; className?: string }) {
+  return (
+    <FieldLabel label={label} className={className}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={cx(T.input, 'h-10')}>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </FieldLabel>
+  );
+}
+
+function LabText({ label, value, onChange, placeholder, className }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; className?: string }) {
+  return (
+    <FieldLabel label={label} className={className}>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={cx(T.input, 'h-10')} />
+    </FieldLabel>
+  );
+}
+
+const EMPTY_PROFILE: LabProfile = { dentist: '', license: '', practice: '', phone: '', lab: '' };
+
+/** Preference fields kept in a template (no patient data, teeth or dates). */
+const LAB_TEMPLATE_KEYS: (keyof LabScriptState)[] = [
+  'type',
+  'material',
+  'shade',
+  'stumpShade',
+  'shadeNotes',
+  'contacts',
+  'occlusion',
+  'clearance',
+  'margin',
+  'pontic',
+  'metalCollar',
+  'implantSystem',
+  'implantPlatform',
+  'implantRetention',
+  'abutment',
+  'implantImpression',
+  'emergence',
+  'dentureOcclusion',
+  'mould',
+  'baseShade',
+  'majorConnector',
+  'clasps',
+  'guardThickness',
+  'enclosures',
+  'instructions',
+  'returnFor',
+];
+
+function initialLabState(activeProcedureId: string | null, toothId: string | null, today: Date): LabScriptState {
+  const preset = activeProcedureId ? LAB_PRESET_BY_PROCEDURE[activeProcedureId] : undefined;
+  const st = defaultLabState(preset?.type ?? 'crown', toothId, today);
+  if (preset?.stage) {
+    if (preset.type === 'complete-denture') st.dentureStage = preset.stage;
+    st.returnFor = preset.stage;
+    st.dueDate = suggestedDueDate(st, today);
+  }
+  return st;
+}
+
+function LabScriptPanel({ tooth, activeProcedureId }: { tooth: ToothInfo | null; activeProcedureId: string | null }) {
+  const today = useMemo(() => new Date(), []);
+  const [s, setS] = useState<LabScriptState>(() => initialLabState(activeProcedureId, tooth?.id ?? null, today));
+  /** Until the clinician edits the script, follow the open procedure and active tooth. */
+  const pristine = useRef(true);
+  useEffect(() => {
+    if (pristine.current) setS(initialLabState(activeProcedureId, tooth?.id ?? null, today));
+  }, [activeProcedureId, tooth, today]);
+  const [copied, setCopied] = useState<'idle' | 'ok' | 'err'>('idle');
+  const [profile, setProfile] = useLocalStorage<LabProfile>('lab.profile', EMPTY_PROFILE);
+  const [templates, setTemplates] = useLocalStorage<LabTemplate[]>('lab.templates', []);
+  const [templateName, setTemplateName] = useState('');
+  const [dueTouched, setDueTouched] = useState(false);
+  const [printBlocked, setPrintBlocked] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(() => !readStorage<LabProfile>('lab.profile', EMPTY_PROFILE).license);
+
+  const c = LAB_CASE_BY_ID[s.type];
+  const mat = c.materials.find((m) => m.id === s.material) ?? c.materials[0];
+  const set = <K extends keyof LabScriptState>(k: K, v: LabScriptState[K]) => {
+    pristine.current = false;
+    setS((prev) => {
+      const next = { ...prev, [k]: v };
+      if (!dueTouched && (k === 'rush' || k === 'returnFor' || k === 'dentureStage')) next.dueDate = suggestedDueDate(next, today);
+      return next;
+    });
+  };
+  const chooseType = (type: LabCaseType) => {
+    pristine.current = false;
+    setS((prev) => {
+      const next = defaultLabState(type, tooth?.id ?? null, today);
+      next.patientId = prev.patientId;
+      next.age = prev.age;
+      next.sex = prev.sex;
+      next.shade = prev.shade;
+      next.rush = prev.rush;
+      if (dueTouched) next.dueDate = prev.dueDate;
+      else next.dueDate = suggestedDueDate(next, today);
+      return next;
+    });
+  };
+  const script = buildLabScript(s, profile, today);
+  const checks = labChecks(s, profile);
+  const ready = checks.missing.length === 0;
+  const showShade = Boolean(mat.ceramic) || c.id === 'complete-denture' || c.id === 'rpd';
+  const showStump = Boolean(mat.ceramic) && c.id !== 'implant';
+
+  const saveTemplate = () => {
+    const name = templateName.trim() || `${c.label} · ${mat.label.split(' — ')[0]}`;
+    const state: Partial<LabScriptState> = {};
+    for (const k of LAB_TEMPLATE_KEYS) (state as Record<string, unknown>)[k] = s[k];
+    setTemplates((prev) => [...prev.filter((t) => t.name !== name), { id: `${Date.now()}`, name, state }]);
+    setTemplateName('');
+  };
+  const loadTemplate = (t: LabTemplate) => {
+    pristine.current = false;
+    setS((prev) => {
+      const next = { ...defaultLabState(t.state.type ?? prev.type, tooth?.id ?? null, today), ...t.state };
+      next.teeth = t.state.type === prev.type ? prev.teeth : next.teeth;
+      next.patientId = prev.patientId;
+      next.age = prev.age;
+      next.sex = prev.sex;
+      next.rush = prev.rush;
+      next.dueDate = dueTouched ? prev.dueDate : suggestedDueDate(next, today);
+      return next;
+    });
+  };
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
+      {/* ------------------------------ Form ------------------------------ */}
+      <div className="min-w-0 space-y-4">
+        {templates.length > 0 && (
+          <div className={cx(T.card, 'flex flex-wrap items-center gap-2 p-3')}>
+            <Bookmark className="h-4 w-4 text-amber-800" aria-hidden />
+            <span className={cx('text-xs font-semibold uppercase tracking-wider', T.body)}>My templates</span>
+            {templates.map((t) => (
+              <span key={t.id} className="inline-flex items-center rounded-xl border border-stone-300 bg-white">
+                <button type="button" onClick={() => loadTemplate(t)} className={cx('rounded-l-xl px-2.5 py-1 text-xs font-semibold text-stone-800 hover:bg-amber-50', T.focus)}>
+                  {t.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTemplates((prev) => prev.filter((x) => x.id !== t.id))}
+                  aria-label={`Delete template ${t.name}`}
+                  className={cx('grid h-7 w-7 place-items-center rounded-r-xl border-l border-stone-300 text-stone-700 hover:bg-stone-100', T.focus)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <LabSection n={1} title="Case type">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {LAB_CASES.map((lc) => {
+              const on = lc.id === s.type;
+              return (
+                <button
+                  key={lc.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => chooseType(lc.id)}
+                  className={cx(
+                    'rounded-xl border p-3 text-left transition active:scale-[0.98]',
+                    on ? 'border-stone-900 bg-stone-900 text-white' : 'border-stone-300 bg-white text-stone-900 hover:border-amber-700',
+                    T.focus,
+                  )}
+                >
+                  <lc.icon className={cx('h-4 w-4', on ? 'text-amber-300' : 'text-amber-800')} aria-hidden />
+                  <span className="mt-1.5 block text-sm font-semibold">{lc.label}</span>
+                  <span className={cx('block text-xs', on ? 'text-stone-200' : 'text-stone-600')}>{lc.subtitle}</span>
+                </button>
+              );
+            })}
+          </div>
+        </LabSection>
+
+        <LabSection
+          n={2}
+          title={c.pick === 'arch' ? 'Arch' : c.pick === 'arch-clasps' ? 'Arch & abutment teeth' : c.pick === 'implants' ? 'Implant sites' : 'Teeth'}
+          hint={tooth && (c.pick === 'units' || c.pick === 'bridge' || c.pick === 'implants') ? `Active tooth #${tooth.id} pre-selected` : undefined}
+        >
+          {(c.pick === 'arch' || c.pick === 'arch-clasps') && (
+            <div className="mb-3">
+              <Segmented
+                label="Arch"
+                value={s.arch}
+                onChange={(v) => {
+                  set('arch', v);
+                  if (s.type === 'rpd') set('majorConnector', v === 'mandibular' ? 'Lingual bar' : 'Anterior–posterior palatal strap');
+                }}
+                options={
+                  c.id === 'rpd'
+                    ? [
+                        { value: 'maxillary', label: 'Maxillary' },
+                        { value: 'mandibular', label: 'Mandibular' },
+                      ]
+                    : [
+                        { value: 'maxillary', label: 'Maxillary' },
+                        { value: 'mandibular', label: 'Mandibular' },
+                        { value: 'both', label: 'Both arches' },
+                      ]
+                }
+              />
+            </div>
+          )}
+          {tooth && !tooth.primary && c.pick !== 'arch' && !s.teeth[tooth.id] && (
+            <button
+              type="button"
+              onClick={() => set('teeth', { ...s.teeth, [tooth.id]: c.pick === 'bridge' ? 'abutment' : 'unit' })}
+              className={cx(T.btnOutline, 'mb-2 h-8 text-xs', T.focus)}
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              Add active tooth #{tooth.id}
+            </button>
+          )}
+          {c.pick !== 'arch' && <LabToothPicker mode={c.pick} teeth={s.teeth} onChange={(t) => set('teeth', t)} />}
+          {c.pick === 'bridge' && Object.keys(s.teeth).length > 0 && (
+            <p className={cx('mt-2 rounded-lg bg-stone-100 px-3 py-2 text-sm font-medium', T.strong)}>{teethLine(s).split('\n')[0]}</p>
+          )}
+          {c.pick !== 'arch' && Object.keys(s.teeth).length > 0 && (
+            <button type="button" onClick={() => set('teeth', {})} className={cx(T.btnGhost, 'mt-2 h-8 text-xs', T.focus)}>
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+              Clear teeth
+            </button>
+          )}
+        </LabSection>
+
+        <LabSection n={3} title={c.materialLabel}>
+          <div className="grid gap-2">
+            {c.materials.map((m) => {
+              const on = m.id === s.material;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => set('material', m.id)}
+                  className={cx(
+                    'flex items-start gap-3 rounded-xl border p-3 text-left transition',
+                    on ? 'border-2 border-amber-700 bg-amber-50' : 'border-stone-300 bg-white hover:border-stone-500',
+                    T.focus,
+                  )}
+                >
+                  <span className={cx('mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2', on ? 'border-amber-700 bg-amber-700' : 'border-stone-400 bg-white')}>
+                    {on && <span className="h-2 w-2 rounded-full bg-white" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-stone-900">{m.label}</span>
+                    <span className="block text-xs text-stone-700">{m.detail}</span>
+                    {on && m.prep !== '—' && (
+                      <span className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-amber-900">
+                        <Ruler className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                        Prep check: {m.prep}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </LabSection>
+
+        {showShade && (
+          <LabSection n={4} title={c.id === 'complete-denture' || c.id === 'rpd' ? 'Tooth shade & mould' : 'Shade & esthetics'}>
+            <div className="space-y-3">
+              <FieldLabel label={c.id === 'complete-denture' || c.id === 'rpd' ? 'Tooth shade' : 'Shade (VITA classical)'}>
+                <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Shade">
+                  {VITA_SHADES.map((sh) => (
+                    <button
+                      key={sh}
+                      type="button"
+                      role="radio"
+                      aria-checked={s.shade === sh}
+                      onClick={() => set('shade', s.shade === sh ? '' : sh)}
+                      className={cx(
+                        'h-9 min-w-[3rem] rounded-lg border px-2 font-mono text-sm font-bold transition',
+                        s.shade === sh ? 'border-stone-900 bg-stone-900 text-white' : 'border-stone-300 bg-white text-stone-800 hover:border-amber-700',
+                        T.focus,
+                      )}
+                    >
+                      {sh}
+                    </button>
+                  ))}
+                </div>
+              </FieldLabel>
+              {showStump && (
+                <FieldLabel label="Stump shade (IPS Natural Die Material)">
+                  <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Stump shade">
+                    {STUMP_SHADES.map((sh) => (
+                      <button
+                        key={sh}
+                        type="button"
+                        role="radio"
+                        aria-checked={s.stumpShade === sh}
+                        onClick={() => set('stumpShade', s.stumpShade === sh ? '' : sh)}
+                        className={cx(
+                          'h-9 min-w-[3rem] rounded-lg border px-2 font-mono text-sm font-bold transition',
+                          s.stumpShade === sh ? 'border-stone-900 bg-stone-900 text-white' : 'border-stone-300 bg-white text-stone-800 hover:border-amber-700',
+                          T.focus,
+                        )}
+                      >
+                        {sh}
+                      </button>
+                    ))}
+                  </div>
+                </FieldLabel>
+              )}
+              {(c.id === 'complete-denture' || c.id === 'rpd') && (
+                <LabText label="Mould" value={s.mould} onChange={(v) => set('mould', v)} placeholder="e.g. Portrait IPN 22F / 32M posterior" />
+              )}
+              {c.id !== 'complete-denture' && c.id !== 'rpd' && (
+                <FieldLabel label="Esthetic notes">
+                  <textarea
+                    rows={2}
+                    value={s.shadeNotes}
+                    onChange={(e) => set('shadeNotes', e.target.value)}
+                    placeholder="e.g. A2 body, A1 incisal third, subtle incisal translucency, match #8 surface texture"
+                    className={cx(T.input, 'py-2')}
+                  />
+                </FieldLabel>
+              )}
+            </div>
+          </LabSection>
+        )}
+
+        <LabSection n={showShade ? 5 : 4} title="Design details">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(c.id === 'crown' || c.id === 'bridge' || c.id === 'veneer' || c.id === 'inlay' || c.id === 'implant') && (
+              <>
+                <FieldLabel label="Proximal contacts">
+                  <Segmented
+                    label="Proximal contacts"
+                    value={s.contacts}
+                    onChange={(v) => set('contacts', v)}
+                    options={[
+                      { value: 'Light', label: 'Light' },
+                      { value: 'Normal', label: 'Normal' },
+                      { value: 'Firm', label: 'Firm' },
+                    ]}
+                  />
+                </FieldLabel>
+                <LabSelect
+                  label="Occlusion"
+                  value={s.occlusion}
+                  onChange={(v) => set('occlusion', v)}
+                  options={[
+                    'Light contact in MIP, clear in excursions',
+                    'Even contact in MIP, group function',
+                    'Canine guidance; no posterior excursive contact',
+                    'Out of occlusion (shimstock passes in MIP)',
+                  ]}
+                />
+                {c.id !== 'implant' && (
+                  <LabSelect
+                    label="Margins"
+                    value={s.margin}
+                    onChange={(v) => set('margin', v)}
+                    options={['As prepared — please mark margins', 'Margins marked on the model', 'Butt-joint margins (no bevel)']}
+                  />
+                )}
+                {c.id !== 'implant' && c.id !== 'veneer' && (
+                  <LabSelect
+                    label="If occlusal clearance is insufficient"
+                    value={s.clearance}
+                    onChange={(v) => set('clearance', v)}
+                    options={['Call me before proceeding', 'Send a reduction coping / guide', 'Metal occlusal surface is acceptable', 'Adjust the opposing — mark on the model']}
+                  />
+                )}
+                {c.id === 'bridge' && (
+                  <LabSelect
+                    label="Pontic design"
+                    value={s.pontic}
+                    onChange={(v) => set('pontic', v)}
+                    options={['Modified ridge lap', 'Ovate (site prepared)', 'Hygienic / sanitary (posterior mandible)', 'Conical']}
+                  />
+                )}
+                {(s.material === 'pfm-hn' || s.material === 'pfm-base') && (c.id === 'crown' || c.id === 'bridge') && (
+                  <LabSelect
+                    label="Metal–ceramic design"
+                    value={s.metalCollar}
+                    onChange={(v) => set('metalCollar', v)}
+                    options={['Porcelain butt margin facial, 1–2 mm metal collar lingual', '360° porcelain butt margin', '360° metal collar', 'Metal occlusal surface']}
+                  />
+                )}
+                <div className="sm:col-span-2">
+                  <Toggle checked={s.parafunction} onChange={(v) => set('parafunction', v)} label="Parafunction / heavy occlusion" description="Adds design notes and checks the material choice" />
+                </div>
+              </>
+            )}
+
+            {c.id === 'implant' && (
+              <>
+                <LabText label="Implant system" value={s.implantSystem} onChange={(v) => set('implantSystem', v)} placeholder="e.g. Straumann BLT, Nobel Active" />
+                <LabText label="Platform / diameter" value={s.implantPlatform} onChange={(v) => set('implantPlatform', v)} placeholder="e.g. RC 4.1 mm" />
+                <FieldLabel label="Retention">
+                  <Segmented
+                    label="Retention"
+                    value={s.implantRetention}
+                    onChange={(v) => set('implantRetention', v)}
+                    options={[
+                      { value: 'Screw-retained', label: 'Screw-retained' },
+                      { value: 'Cement-retained', label: 'Cement-retained' },
+                    ]}
+                  />
+                </FieldLabel>
+                <LabSelect
+                  label="Abutment"
+                  value={s.abutment}
+                  onChange={(v) => set('abutment', v)}
+                  options={['Ti-base (manufacturer’s original)', 'Custom titanium abutment', 'Custom zirconia on Ti-base', 'Stock abutment (prepped by lab)']}
+                />
+                <LabSelect
+                  label="Impression"
+                  value={s.implantImpression}
+                  onChange={(v) => set('implantImpression', v)}
+                  options={['Closed tray (transfer)', 'Open tray (pick-up)', 'Intraoral scan with scan body']}
+                />
+                <LabSelect
+                  label="Emergence profile"
+                  value={s.emergence}
+                  onChange={(v) => set('emergence', v)}
+                  options={['Match the provisional / healing contour', 'Lab to design ideal emergence', 'Concave transmucosal (esthetic zone)']}
+                />
+              </>
+            )}
+
+            {c.id === 'complete-denture' && (
+              <>
+                <LabSelect label="Stage requested" value={s.dentureStage} onChange={(v) => { set('dentureStage', v); set('returnFor', v); }} options={c.returnOptions} />
+                <LabSelect label="Occlusal scheme" value={s.dentureOcclusion} onChange={(v) => set('dentureOcclusion', v)} options={['Lingualized', 'Bilateral balanced', 'Monoplane (neutral)']} />
+                <LabSelect label="Base shade" value={s.baseShade} onChange={(v) => set('baseShade', v)} options={['Light pink (standard)', 'Medium pink', 'Characterized / veined', 'Ethnic dark']} />
+              </>
+            )}
+
+            {c.id === 'rpd' && (
+              <>
+                <LabSelect label="Stage requested" value={s.returnFor} onChange={(v) => set('returnFor', v)} options={c.returnOptions} />
+                <LabSelect
+                  label="Major connector"
+                  value={s.majorConnector}
+                  onChange={(v) => set('majorConnector', v)}
+                  options={
+                    s.arch === 'mandibular'
+                      ? ['Lingual bar', 'Lingual plate', 'Labial bar']
+                      : ['Anterior–posterior palatal strap', 'Palatal strap', 'Complete palate', 'U-shaped (horseshoe) — torus']
+                  }
+                />
+                <LabSelect
+                  label="Clasp design"
+                  value={s.clasps || 'As drawn on the surveyed cast'}
+                  onChange={(v) => set('clasps', v)}
+                  options={['As drawn on the surveyed cast', 'RPI (distal extension)', 'RPA (distal extension)', 'Circumferential (tooth-borne)', 'Combination wrought-wire']}
+                />
+              </>
+            )}
+
+            {c.id === 'guard' && (
+              <LabSelect label="Thickness" value={s.guardThickness} onChange={(v) => set('guardThickness', v)} options={['2 mm at the thinnest point', '2.5 mm at the thinnest point', '3 mm at the thinnest point']} />
+            )}
+          </div>
+          <FieldLabel label="Additional instructions" className="mt-3">
+            <textarea
+              rows={2}
+              value={s.instructions}
+              onChange={(e) => set('instructions', e.target.value)}
+              placeholder="Anything the lab should know: gingival shade, midline shift, embrasure form, previous remake issues…"
+              className={cx(T.input, 'py-2')}
+            />
+          </FieldLabel>
+        </LabSection>
+
+        <LabSection n={showShade ? 6 : 5} title="Enclosures & return date">
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {c.enclosures.map((e) => {
+              const on = s.enclosures.includes(e);
+              return (
+                <button
+                  key={e}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={on}
+                  onClick={() => set('enclosures', on ? s.enclosures.filter((x) => x !== e) : [...s.enclosures, e])}
+                  className={cx('flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-amber-50', T.focus)}
+                >
+                  <span className={cx('mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border', on ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-stone-400 bg-white')}>
+                    {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                  </span>
+                  <span className="text-sm text-stone-800">{e}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {c.id !== 'complete-denture' && c.id !== 'rpd' && (
+              <LabSelect label="Return for" value={s.returnFor} onChange={(v) => set('returnFor', v)} options={c.returnOptions} />
+            )}
+            <FieldLabel label="Return date">
+              <input
+                type="date"
+                value={s.dueDate}
+                min={isoDate(today)}
+                onChange={(e) => {
+                  setDueTouched(true);
+                  set('dueDate', e.target.value);
+                }}
+                className={cx(T.input, 'h-10')}
+              />
+            </FieldLabel>
+            <div className="flex items-end">
+              <Toggle checked={s.rush} onChange={(v) => set('rush', v)} label="Rush case" />
+            </div>
+          </div>
+          <p className={cx('mt-2 flex flex-wrap items-center gap-2 text-xs', T.body)}>
+            <CalendarDays className="h-3.5 w-3.5 text-amber-800" aria-hidden />
+            Typical lab time: {labTurnaround(s)} working days → {formatLongDate(suggestedDueDate(s, today))}
+            {dueTouched && s.dueDate !== suggestedDueDate(s, today) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDueTouched(false);
+                  setS((prev) => ({ ...prev, dueDate: suggestedDueDate(prev, today) }));
+                }}
+                className="font-semibold text-amber-900 underline underline-offset-2"
+              >
+                Use suggested date
+              </button>
+            )}
+          </p>
+        </LabSection>
+
+        <LabSection n={showShade ? 7 : 6} title="Patient & prescriber" hint="No names — use a chart number or initials">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <LabText label="Patient ID / initials" value={s.patientId} onChange={(v) => set('patientId', v)} placeholder="e.g. Chart 20417 or J.D." />
+            <LabText label="Age" value={s.age} onChange={(v) => set('age', v)} placeholder="e.g. 52" />
+            <LabSelect label="Sex" value={s.sex} onChange={(v) => set('sex', v)} options={['', 'F', 'M', 'X']} />
+          </div>
+          <button
+            type="button"
+            onClick={() => setProfileOpen((o) => !o)}
+            aria-expanded={profileOpen}
+            className={cx('mt-3 flex w-full items-center justify-between rounded-xl border border-stone-300 bg-stone-50 px-3 py-2 text-left', T.focus)}
+          >
+            <span className="text-sm font-semibold text-stone-900">
+              Prescriber & lab
+              <span className="ml-2 text-xs font-normal text-stone-700">
+                {profile.dentist ? `${profile.dentist}${profile.license ? ` · Lic ${profile.license}` : ''}` : 'Saved once in this browser'}
+              </span>
+            </span>
+            <ChevronDown className={cx('h-4 w-4 text-stone-700 transition-transform', profileOpen && 'rotate-180')} aria-hidden />
+          </button>
+          {profileOpen && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <LabText label="Prescriber (Dr.)" value={profile.dentist} onChange={(v) => setProfile((p) => ({ ...p, dentist: v }))} placeholder="Dr. A. Smith, DDS" />
+              <LabText label="License #" value={profile.license} onChange={(v) => setProfile((p) => ({ ...p, license: v }))} />
+              <LabText label="Practice" value={profile.practice} onChange={(v) => setProfile((p) => ({ ...p, practice: v }))} />
+              <LabText label="Phone" value={profile.phone} onChange={(v) => setProfile((p) => ({ ...p, phone: v }))} />
+              <LabText label="Dental laboratory" value={profile.lab} onChange={(v) => setProfile((p) => ({ ...p, lab: v }))} className="sm:col-span-2" />
+            </div>
+          )}
+        </LabSection>
+      </div>
+
+      {/* ---------------------------- Preview ----------------------------- */}
+      <aside className="space-y-3 lg:sticky lg:top-0 lg:self-start">
+        <div className={cx('rounded-2xl border p-3', ready ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50')} role="status">
+          <p className={cx('flex items-center gap-2 text-sm font-semibold', ready ? 'text-emerald-900' : 'text-amber-950')}>
+            {ready ? <PackageCheck className="h-4 w-4" aria-hidden /> : <ClipboardList className="h-4 w-4" aria-hidden />}
+            {ready ? 'Ready to send' : `${checks.missing.length} item${checks.missing.length === 1 ? '' : 's'} to complete`}
+          </p>
+          {!ready && (
+            <ul className="mt-1.5 space-y-0.5 pl-6 text-xs text-amber-950">
+              {checks.missing.map((m) => (
+                <li key={m} className="list-disc">
+                  {m}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {checks.warnings.map((w) => (
+          <CautionCallout key={w} text={w} title="Clinical check" />
+        ))}
+        <div className={cx(T.card, 'overflow-hidden')}>
+          <div className={cx('flex items-center justify-between gap-2 border-b px-4 py-2.5', T.divider)}>
+            <p className={cx('text-xs font-bold uppercase tracking-wider', T.body)}>Lab prescription preview</p>
+            <span className={cx('text-xs', T.muted)}>{c.label}</span>
+          </div>
+          <pre className="max-h-[460px] overflow-auto whitespace-pre-wrap bg-white p-4 font-mono text-xs leading-relaxed text-stone-900">{script}</pre>
+        </div>
+        <div className={cx('grid gap-2', printAvailable() ? 'grid-cols-2' : 'grid-cols-1')}>
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await copyToClipboard(script);
+              setCopied(ok ? 'ok' : 'err');
+              window.setTimeout(() => setCopied('idle'), 2000);
+            }}
+            className={cx(
+              'inline-flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition active:scale-[0.98]',
+              copied === 'ok' ? 'border-emerald-700 bg-emerald-700 text-white' : copied === 'err' ? 'border-rose-800 bg-rose-800 text-white' : 'border-stone-400 bg-white text-stone-900 hover:bg-stone-50',
+              T.focus,
+            )}
+          >
+            {copied === 'ok' ? <ClipboardCheck className="h-4 w-4" aria-hidden /> : <ClipboardCopy className="h-4 w-4" aria-hidden />}
+            {copied === 'ok' ? 'Copied' : copied === 'err' ? 'Copy failed' : 'Copy Rx'}
+          </button>
+          {printAvailable() && (
+            <button
+              type="button"
+              onClick={() => setPrintBlocked(!printLabScript(script, `Lab Rx — ${c.label}`))}
+              className={cx(T.btnPrimary, 'h-11', T.focus)}
+            >
+              <Printer className="h-4 w-4" aria-hidden />
+              Print
+            </button>
+          )}
+        </div>
+        {printBlocked && <p className="text-xs font-medium text-rose-800">The print window was blocked. Allow pop-ups, or use Copy Rx and paste into your document.</p>}
+        <div className={cx(T.card, 'p-3')}>
+          <p className={cx('mb-2 text-xs font-bold uppercase tracking-wider', T.body)}>Save as template</p>
+          <div className="flex gap-2">
+            <input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder={`${c.label} · ${mat.label.split(' — ')[0]}`}
+              aria-label="Template name"
+              className={cx(T.input, 'h-10')}
+            />
+            <button type="button" onClick={saveTemplate} className={cx(T.btnOutline, 'h-10 shrink-0', T.focus)}>
+              <Save className="h-4 w-4" aria-hidden />
+              Save
+            </button>
+          </div>
+          <p className={cx('mt-1.5 text-xs', T.muted)}>Saves your preferences (material, shade, design, enclosures) — never patient details.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setDueTouched(false);
+            pristine.current = true;
+            setS(initialLabState(activeProcedureId, tooth?.id ?? null, today));
+          }}
+          className={cx(T.btnGhost, 'h-9 w-full text-xs', T.focus)}
+        >
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+          Start a new script
+        </button>
+      </aside>
+    </div>
+  );
+}
+
+
+/* ========================================================================== */
+/* 7c. PRESCRIPTIONS & PREGNANCY HUB                                          */
+/*                                                                            */
+/* Tab 1 — prescription writer with quick-load presets (analgesics,          */
+/*         antibiotics, antifungals, antivirals, topicals & rinses).         */
+/* Tab 2 — pregnancy & lactation reference: trimester protocol, supine       */
+/*         hypotensive syndrome, radiographs, dental drug safety directory.  */
+/* A shared "Pregnancy status" control flags every preset and the live Rx.   */
+/*                                                                            */
+/* Sources: ADA 2024 acute dental pain; ADA 2019 antibiotics for dental pain */
+/* and swelling; AHA 2021 (clindamycin); FDA 2020 NSAIDs ≥ 20 weeks; FDA     */
+/* 2016 oral fluconazole; FDA 2017 codeine/tramadol in lactation; ACOG CO    */
+/* 569; ADA/FDA 2023 radiographs; FDA PLLR (2015). Chairside aid only.       */
+/* ========================================================================== */
+
+/* -- Types --------------------------------------------------------------- */
+
+type PregnancyStatus = 'none' | 't1' | 't2' | 't3' | 'lactating';
+type SafetyLevel = 'preferred' | 'acceptable' | 'caution' | 'avoid' | 'contraindicated';
+type HubTab = 'rx' | 'pregnancy';
+
+interface DrugSafety {
+  id: string;
+  group: DrugGroup;
+  name: string;
+  legacy?: string;
+  preg: { t1: SafetyLevel; t2: SafetyLevel; t3: SafetyLevel };
+  pregNote: string;
+  lact: SafetyLevel;
+  lactNote: string;
+}
+
+type DrugGroup = 'Local anesthetics' | 'Analgesics' | 'Antibiotics' | 'Antifungals & antivirals' | 'Topicals & rinses' | 'Sedation';
+
+type RxGroup = 'Analgesics' | 'Antibiotics' | 'Antifungals' | 'Antivirals' | 'Topical pastes & rinses';
+
+interface RxPreset {
+  id: string;
+  group: RxGroup;
+  tier: string;
+  drug: string;
+  sig: string;
+  qty: number;
+  unit: string;
+  refills: number;
+  indication: string;
+  drugIds: string[];
+  notes?: string[];
+  warning?: string;
+}
+
+interface RxForm {
+  patient: string;
+  dob: string;
+  date: string;
+  presetId: string;
+  drug: string;
+  sig: string;
+  qty: string;
+  unit: string;
+  refills: string;
+  indication: string;
+  daw: boolean;
+}
+
+interface Prescriber {
+  name: string;
+  credentials: string;
+  license: string;
+  npi: string;
+  practice: string;
+  address: string;
+  phone: string;
+}
+
+/* -- Clinical data ------------------------------------------------------- */
+
+const LEVEL_STYLE: Record<SafetyLevel, { label: string; cls: string }> = {
+  preferred: { label: 'Preferred', cls: 'border-emerald-700 bg-emerald-700 text-white' },
+  acceptable: { label: 'Acceptable', cls: 'border-emerald-300 bg-emerald-50 text-emerald-900' },
+  caution: { label: 'Use caution', cls: 'border-amber-400 bg-amber-50 text-amber-950' },
+  avoid: { label: 'Avoid', cls: 'border-rose-300 bg-rose-50 text-rose-900' },
+  contraindicated: { label: 'Contraindicated', cls: 'border-rose-800 bg-rose-800 text-white' },
+};
+
+const STATUS_LABEL: Record<PregnancyStatus, string> = {
+  none: 'Not pregnant',
+  t1: '1st trimester',
+  t2: '2nd trimester',
+  t3: '3rd trimester',
+  lactating: 'Breastfeeding',
+};
+
+/** Pregnancy & lactation directory. Legacy FDA letters are shown for reference only. */
+const DRUG_SAFETY: DrugSafety[] = [
+  /* ----------------------------- Local anesthetics ----------------------------- */
+  {
+    id: 'lidocaine',
+    group: 'Local anesthetics',
+    name: 'Lidocaine 2% with epinephrine 1:100,000',
+    legacy: 'B',
+    preg: { t1: 'preferred', t2: 'preferred', t3: 'preferred' },
+    pregNote: 'First choice. Normal dental doses are safe in every trimester; aspirate to avoid intravascular injection.',
+    lact: 'preferred',
+    lactNote: 'Negligible transfer to milk; no need to interrupt breastfeeding.',
+  },
+  {
+    id: 'prilocaine',
+    group: 'Local anesthetics',
+    name: 'Prilocaine 4% (plain or with epinephrine)',
+    legacy: 'B',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable; avoid large doses (methemoglobinemia risk for mother and fetus).',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'articaine',
+    group: 'Local anesthetics',
+    name: 'Articaine 4% with epinephrine (Septocaine)',
+    legacy: 'C',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable at normal clinical volumes; rapid plasma hydrolysis limits fetal exposure.',
+    lact: 'acceptable',
+    lactNote: 'Very short half-life; compatible.',
+  },
+  {
+    id: 'mepivacaine',
+    group: 'Local anesthetics',
+    name: 'Mepivacaine 3% plain',
+    legacy: 'C',
+    preg: { t1: 'caution', t2: 'caution', t3: 'caution' },
+    pregNote: 'Usable when a plain anesthetic is needed; lidocaine is preferred (slower fetal metabolism).',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'bupivacaine',
+    group: 'Local anesthetics',
+    name: 'Bupivacaine 0.5% with epinephrine 1:200,000',
+    legacy: 'C',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'avoid' },
+    pregNote: 'Avoid: long duration and reported fetal bradycardia / cardiotoxicity concerns. Use lidocaine.',
+    lact: 'caution',
+    lactNote: 'Low milk levels; long-acting — use only if needed.',
+  },
+  {
+    id: 'epinephrine',
+    group: 'Local anesthetics',
+    name: 'Epinephrine (1:100,000–1:200,000 in cartridges)',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Dental concentrations are safe and improve anesthesia. Aspirate: intravascular injection can reduce uterine blood flow.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  /* -------------------------------- Analgesics --------------------------------- */
+  {
+    id: 'acetaminophen',
+    group: 'Analgesics',
+    name: 'Acetaminophen',
+    legacy: 'B',
+    preg: { t1: 'preferred', t2: 'preferred', t3: 'preferred' },
+    pregNote:
+      'First-line analgesic in all trimesters (ACOG). Use the lowest effective dose for the shortest time. In 2025 the FDA started a label change about a possible link between prolonged prenatal use and neurodevelopmental outcomes; ACOG still recommends it as the preferred analgesic.',
+    lact: 'preferred',
+    lactNote: 'Preferred; compatible with breastfeeding.',
+  },
+  {
+    id: 'ibuprofen',
+    group: 'Analgesics',
+    name: 'Ibuprofen (and other NSAIDs)',
+    legacy: 'C / D ≥ 30 wk',
+    preg: { t1: 'caution', t2: 'avoid', t3: 'contraindicated' },
+    pregNote:
+      'T1: avoid if possible (miscarriage association). FDA 2020: avoid from 20 weeks (oligohydramnios, fetal renal dysfunction). T3: contraindicated — premature closure of the ductus arteriosus.',
+    lact: 'preferred',
+    lactNote: 'Preferred NSAID while breastfeeding (very low milk transfer).',
+  },
+  {
+    id: 'naproxen',
+    group: 'Analgesics',
+    name: 'Naproxen',
+    legacy: 'C / D ≥ 30 wk',
+    preg: { t1: 'caution', t2: 'avoid', t3: 'contraindicated' },
+    pregNote: 'Same restrictions as ibuprofen.',
+    lact: 'caution',
+    lactNote: 'Long half-life; short courses only — ibuprofen preferred.',
+  },
+  {
+    id: 'aspirin',
+    group: 'Analgesics',
+    name: 'Aspirin (analgesic doses)',
+    legacy: 'D',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'contraindicated' },
+    pregNote: 'Avoid analgesic doses (bleeding, ductus closure). Low-dose aspirin prescribed by the obstetrician is a separate indication — do not stop it.',
+    lact: 'avoid',
+    lactNote: 'Avoid (Reye syndrome risk in the infant).',
+  },
+  {
+    id: 'opioids',
+    group: 'Analgesics',
+    name: 'Hydrocodone / oxycodone',
+    legacy: 'C',
+    preg: { t1: 'caution', t2: 'caution', t3: 'avoid' },
+    pregNote: 'Avoid when possible. If unavoidable: ≤ 3 days, lowest dose, after obstetric consultation. Near term: neonatal respiratory depression and withdrawal.',
+    lact: 'caution',
+    lactNote: 'Shortest course; monitor the infant for sedation and poor feeding.',
+  },
+  {
+    id: 'codeine',
+    group: 'Analgesics',
+    name: 'Codeine / tramadol',
+    legacy: 'C',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'avoid' },
+    pregNote: 'Avoid: unpredictable metabolism (CYP2D6) and neonatal withdrawal.',
+    lact: 'contraindicated',
+    lactNote: 'FDA 2017: contraindicated while breastfeeding — ultra-rapid metabolizers expose the infant to dangerous opioid levels.',
+  },
+  /* -------------------------------- Antibiotics -------------------------------- */
+  {
+    id: 'amoxicillin',
+    group: 'Antibiotics',
+    name: 'Amoxicillin / penicillin VK',
+    legacy: 'B',
+    preg: { t1: 'preferred', t2: 'preferred', t3: 'preferred' },
+    pregNote: 'First-line when an antibiotic is indicated.',
+    lact: 'preferred',
+    lactNote: 'Compatible; watch the infant for loose stools or thrush.',
+  },
+  {
+    id: 'amox-clav',
+    group: 'Antibiotics',
+    name: 'Amoxicillin–clavulanate (Augmentin)',
+    legacy: 'B',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable; some obstetricians avoid near preterm delivery.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'cephalexin',
+    group: 'Antibiotics',
+    name: 'Cephalexin (cephalosporins)',
+    legacy: 'B',
+    preg: { t1: 'preferred', t2: 'preferred', t3: 'preferred' },
+    pregNote: 'Safe alternative for non-severe penicillin allergy.',
+    lact: 'preferred',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'azithromycin',
+    group: 'Antibiotics',
+    name: 'Azithromycin',
+    legacy: 'B',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable for severe penicillin allergy.',
+    lact: 'acceptable',
+    lactNote: 'Compatible; monitor the infant for GI upset.',
+  },
+  {
+    id: 'clindamycin',
+    group: 'Antibiotics',
+    name: 'Clindamycin',
+    legacy: 'B',
+    preg: { t1: 'caution', t2: 'caution', t3: 'caution' },
+    pregNote: 'Not teratogenic, but carries an FDA boxed warning for C. difficile colitis — reserve for when alternatives are unsuitable.',
+    lact: 'caution',
+    lactNote: 'Monitor the infant for diarrhea or bloody stools.',
+  },
+  {
+    id: 'metronidazole',
+    group: 'Antibiotics',
+    name: 'Metronidazole',
+    legacy: 'B',
+    preg: { t1: 'caution', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Generally acceptable; many clinicians avoid it in the 1st trimester.',
+    lact: 'caution',
+    lactNote: 'Standard doses acceptable; after a single 2 g dose, pause breastfeeding 12–24 h.',
+  },
+  {
+    id: 'tetracyclines',
+    group: 'Antibiotics',
+    name: 'Tetracyclines / doxycycline',
+    legacy: 'D',
+    preg: { t1: 'contraindicated', t2: 'contraindicated', t3: 'contraindicated' },
+    pregNote: 'Contraindicated: intrinsic tooth staining and enamel hypoplasia in the developing dentition, impaired fetal bone growth, maternal hepatotoxicity.',
+    lact: 'caution',
+    lactNote: 'Short courses only; avoid prolonged use (infant tooth staining).',
+  },
+  {
+    id: 'fluoroquinolones',
+    group: 'Antibiotics',
+    name: 'Fluoroquinolones (ciprofloxacin, levofloxacin)',
+    legacy: 'C',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'avoid' },
+    pregNote: 'Avoid: cartilage / arthropathy concerns; safer alternatives exist.',
+    lact: 'caution',
+    lactNote: 'Prefer alternatives.',
+  },
+  {
+    id: 'clarithromycin',
+    group: 'Antibiotics',
+    name: 'Clarithromycin',
+    legacy: 'C',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'avoid' },
+    pregNote: 'Avoid (adverse fetal outcomes in animal data); use azithromycin instead.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  /* ------------------------- Antifungals & antivirals -------------------------- */
+  {
+    id: 'nystatin',
+    group: 'Antifungals & antivirals',
+    name: 'Nystatin suspension',
+    legacy: 'C',
+    preg: { t1: 'preferred', t2: 'preferred', t3: 'preferred' },
+    pregNote: 'Not absorbed from the gut — preferred antifungal in pregnancy.',
+    lact: 'preferred',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'clotrimazole',
+    group: 'Antifungals & antivirals',
+    name: 'Clotrimazole troches',
+    legacy: 'C',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Minimal systemic absorption; acceptable.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'fluconazole',
+    group: 'Antifungals & antivirals',
+    name: 'Fluconazole (oral)',
+    legacy: 'C / D (high dose)',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'avoid' },
+    pregNote: 'Avoid: FDA 2016 — possible miscarriage risk; high-dose prolonged 1st-trimester use is linked to birth defects. Use nystatin or clotrimazole.',
+    lact: 'acceptable',
+    lactNote: 'Compatible at standard doses.',
+  },
+  {
+    id: 'valacyclovir',
+    group: 'Antifungals & antivirals',
+    name: 'Valacyclovir / acyclovir',
+    legacy: 'B',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable; extensive pregnancy registry data are reassuring.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  /* ----------------------------- Topicals & rinses ----------------------------- */
+  {
+    id: 'chlorhexidine',
+    group: 'Topicals & rinses',
+    name: 'Chlorhexidine 0.12% rinse',
+    legacy: 'B',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable; rinse and expectorate. Useful for pregnancy gingivitis.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'triamcinolone',
+    group: 'Topicals & rinses',
+    name: 'Triamcinolone 0.1% dental paste',
+    legacy: 'C',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Small topical amounts; acceptable.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'dexamethasone',
+    group: 'Topicals & rinses',
+    name: 'Dexamethasone elixir (rinse and expectorate)',
+    legacy: 'C',
+    preg: { t1: 'caution', t2: 'caution', t3: 'caution' },
+    pregNote: 'Rinse and spit only; short courses. Prefer topical triamcinolone paste.',
+    lact: 'acceptable',
+    lactNote: 'Compatible as a rinse.',
+  },
+  {
+    id: 'fluoride',
+    group: 'Topicals & rinses',
+    name: 'Fluoride (1.1% NaF toothpaste, varnish)',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Topical use is safe; expectorate, do not swallow. Varnish is safe in pregnancy.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  {
+    id: 'cpp-acp',
+    group: 'Topicals & rinses',
+    name: 'CPP-ACP (MI Paste)',
+    preg: { t1: 'acceptable', t2: 'acceptable', t3: 'acceptable' },
+    pregNote: 'Acceptable; helpful with pregnancy-related vomiting / acid erosion. Contraindicated with milk-protein allergy.',
+    lact: 'acceptable',
+    lactNote: 'Compatible.',
+  },
+  /* --------------------------------- Sedation ---------------------------------- */
+  {
+    id: 'nitrous',
+    group: 'Sedation',
+    name: 'Nitrous oxide / oxygen',
+    legacy: '—',
+    preg: { t1: 'contraindicated', t2: 'caution', t3: 'caution' },
+    pregNote: 'Avoid in the 1st trimester. T2/T3 only after obstetric consultation: short duration, ≥ 50% oxygen, effective scavenging.',
+    lact: 'acceptable',
+    lactNote: 'Eliminated within minutes; no need to interrupt breastfeeding.',
+  },
+  {
+    id: 'benzodiazepines',
+    group: 'Sedation',
+    name: 'Benzodiazepines (triazolam, diazepam)',
+    legacy: 'D / X',
+    preg: { t1: 'avoid', t2: 'avoid', t3: 'avoid' },
+    pregNote: 'Avoid: neonatal sedation / withdrawal; use behavioral anxiety management.',
+    lact: 'avoid',
+    lactNote: 'Avoid (infant sedation).',
+  },
+];
+
+const DRUG_BY_ID = Object.fromEntries(DRUG_SAFETY.map((d) => [d.id, d])) as Record<string, DrugSafety>;
+
+const RX_PRESETS: RxPreset[] = [
+  /* -------------------------------- Analgesics --------------------------------- */
+  {
+    id: 'ibuprofen-600',
+    group: 'Analgesics',
+    tier: 'Mild–moderate pain',
+    drug: 'Ibuprofen 600 mg tablet',
+    sig: 'Take 1 tablet by mouth every 6 hours as needed for pain, with food. Do not exceed 2400 mg in 24 hours.',
+    qty: 20,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Acute dental pain',
+    drugIds: ['ibuprofen'],
+    notes: ['Range: 400–600 mg every 4–6 h as needed; max 2400 mg/day.', 'Avoid with GI bleeding, renal disease, anticoagulants or NSAID-sensitive asthma.'],
+  },
+  {
+    id: 'acetaminophen-500',
+    group: 'Analgesics',
+    tier: 'Mild–moderate pain',
+    drug: 'Acetaminophen 500 mg tablet',
+    sig: 'Take 1–2 tablets (500–1000 mg) by mouth every 6 hours as needed for pain. Do not exceed 3000 mg in 24 hours from all sources.',
+    qty: 30,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Acute dental pain (NSAID contraindicated)',
+    drugIds: ['acetaminophen'],
+    notes: ['Check combination cold/flu products for hidden acetaminophen.', 'Reduce the maximum with liver disease or regular alcohol use.'],
+  },
+  {
+    id: 'ibuprofen-apap',
+    group: 'Analgesics',
+    tier: 'Moderate–severe pain',
+    drug: 'Ibuprofen 600 mg tablet',
+    sig:
+      'Take 1 tablet by mouth every 6 hours with food, together with acetaminophen 500 mg (OTC), for 3 days, then as needed for pain. Max ibuprofen 2400 mg/day; max acetaminophen 3000 mg/day.',
+    qty: 20,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Severe acute dental pain (opioid-sparing combination)',
+    drugIds: ['ibuprofen', 'acetaminophen'],
+    notes: ['Scheduled (around-the-clock) dosing for the first 24–72 h controls pain best.', 'Acetaminophen 500 mg is purchased over the counter.'],
+  },
+  /* -------------------------------- Antibiotics -------------------------------- */
+  {
+    id: 'amoxicillin-500',
+    group: 'Antibiotics',
+    tier: 'First line',
+    drug: 'Amoxicillin 500 mg capsule',
+    sig: 'Take 1 capsule by mouth three times daily (every 8 hours) for 7 days. Finish unless told to stop.',
+    qty: 21,
+    unit: 'capsules',
+    refills: 0,
+    indication: 'Odontogenic infection with systemic involvement — adjunct to definitive treatment',
+    drugIds: ['amoxicillin'],
+    notes: ['ADA 2019: reassess at 3 days; stop 24 h after resolution of systemic signs.'],
+  },
+  {
+    id: 'augmentin-875',
+    group: 'Antibiotics',
+    tier: 'First line (broader)',
+    drug: 'Amoxicillin–clavulanate 875/125 mg tablet',
+    sig: 'Take 1 tablet by mouth twice daily (every 12 hours) with food for 7 days.',
+    qty: 14,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Odontogenic infection not responding to amoxicillin',
+    drugIds: ['amox-clav'],
+    notes: ['Higher rate of GI upset / diarrhea; take with food.'],
+  },
+  {
+    id: 'cephalexin-500',
+    group: 'Antibiotics',
+    tier: 'Penicillin allergy — non-severe',
+    drug: 'Cephalexin 500 mg capsule',
+    sig: 'Take 1 capsule by mouth four times daily (every 6 hours) for 7 days.',
+    qty: 28,
+    unit: 'capsules',
+    refills: 0,
+    indication: 'Odontogenic infection; non-anaphylactic penicillin allergy',
+    drugIds: ['cephalexin'],
+    notes: ['5–7 days. Do not use with a history of anaphylaxis, angioedema or urticaria to penicillin.'],
+  },
+  {
+    id: 'azithromycin-zpak',
+    group: 'Antibiotics',
+    tier: 'Penicillin allergy — severe / anaphylaxis',
+    drug: 'Azithromycin 250 mg tablet (Z-Pak)',
+    sig: 'Take 2 tablets (500 mg) by mouth on day 1, then 1 tablet (250 mg) once daily on days 2 through 5.',
+    qty: 6,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Odontogenic infection; severe penicillin allergy',
+    drugIds: ['azithromycin'],
+    notes: ['QT-prolongation risk: check other QT-prolonging drugs and cardiac history.'],
+  },
+  /* -------------------------------- Antifungals -------------------------------- */
+  {
+    id: 'nystatin-susp',
+    group: 'Antifungals',
+    tier: 'Denture stomatitis / candidiasis',
+    drug: 'Nystatin oral suspension 100,000 units/mL',
+    sig: 'Swish 5 mL in the mouth for at least 2 minutes, then swallow, four times daily after meals and at bedtime for 14 days. Remove dentures before each dose.',
+    qty: 300,
+    unit: 'mL',
+    refills: 0,
+    indication: 'Oral candidiasis / denture stomatitis',
+    drugIds: ['nystatin'],
+    notes: ['Contains sucrose — caries risk with prolonged use in dentate patients.'],
+  },
+  {
+    id: 'clotrimazole-troche',
+    group: 'Antifungals',
+    tier: 'Oropharyngeal candidiasis',
+    drug: 'Clotrimazole 10 mg troche',
+    sig: 'Dissolve 1 troche slowly in the mouth 5 times daily for 14 days. Do not chew or swallow whole.',
+    qty: 70,
+    unit: 'troches',
+    refills: 0,
+    indication: 'Oral candidiasis',
+    drugIds: ['clotrimazole'],
+    notes: ['Takes 15–30 minutes to dissolve; not suitable for very dry mouths.'],
+  },
+  {
+    id: 'fluconazole-100',
+    group: 'Antifungals',
+    tier: 'Refractory / extensive',
+    drug: 'Fluconazole 100 mg tablet',
+    sig: 'Take 2 tablets (200 mg) by mouth on day 1, then 1 tablet (100 mg) once daily for 13 more days.',
+    qty: 15,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Oropharyngeal candidiasis not responding to topical therapy',
+    drugIds: ['fluconazole'],
+    notes: ['7–14 days total. Interactions: warfarin, statins, sulfonylureas, QT-prolonging drugs.'],
+  },
+  /* -------------------------------- Antivirals --------------------------------- */
+  {
+    id: 'valacyclovir-2g',
+    group: 'Antivirals',
+    tier: 'Herpes labialis',
+    drug: 'Valacyclovir 1 g tablet',
+    sig: 'Take 2 tablets (2 g) by mouth at the first sign of symptoms (tingling / burning), then 2 tablets 12 hours later. One day of treatment only.',
+    qty: 4,
+    unit: 'tablets',
+    refills: 0,
+    indication: 'Recurrent herpes labialis — start at prodrome',
+    drugIds: ['valacyclovir'],
+    notes: ['Most effective within 1–2 h of prodrome. Reduce the dose in renal impairment; keep hydrated.'],
+  },
+  /* -------------------------- Topical pastes & rinses -------------------------- */
+  {
+    id: 'triamcinolone-paste',
+    group: 'Topical pastes & rinses',
+    tier: 'Aphthous / traumatic ulcers',
+    drug: 'Triamcinolone acetonide 0.1% dental paste (in Orabase)',
+    sig: 'Dry the area, then dab a thin film onto the ulcer without rubbing in, after meals and at bedtime (2–3 times daily) until healed.',
+    qty: 5,
+    unit: 'g tube',
+    refills: 0,
+    indication: 'Recurrent aphthous stomatitis',
+    drugIds: ['triamcinolone'],
+    notes: ['Reassess any ulcer not healed in 2 weeks (biopsy).'],
+  },
+  {
+    id: 'dexamethasone-elixir',
+    group: 'Topical pastes & rinses',
+    tier: 'Multiple / widespread ulcers',
+    drug: 'Dexamethasone elixir 0.5 mg/5 mL',
+    sig: 'Rinse with 5 mL for 2 minutes, then spit out. Do not swallow. Use four times daily after meals and at bedtime.',
+    qty: 100,
+    unit: 'mL',
+    refills: 0,
+    indication: 'Erosive lichen planus / multiple aphthae',
+    drugIds: ['dexamethasone'],
+    notes: ['Prolonged use can cause oral candidiasis — consider antifungal cover.'],
+  },
+  {
+    id: 'prevident-5000',
+    group: 'Topical pastes & rinses',
+    tier: 'High caries risk',
+    drug: 'PreviDent 5000 Booster Plus (1.1% sodium fluoride) toothpaste',
+    sig: 'Brush for 2 minutes once daily at bedtime in place of regular toothpaste. Spit out — do not rinse, eat or drink for 30 minutes.',
+    qty: 100,
+    unit: 'mL tube',
+    refills: 3,
+    indication: 'High caries risk / root caries / xerostomia',
+    drugIds: ['fluoride'],
+    notes: ['Not for children under 6. Do not swallow.'],
+  },
+  {
+    id: 'chlorhexidine-012',
+    group: 'Topical pastes & rinses',
+    tier: 'Post-surgical / periodontal',
+    drug: 'Chlorhexidine gluconate 0.12% oral rinse (Peridex)',
+    sig: 'Rinse with 15 mL (fill cap to line) for 30 seconds twice daily, then spit out. Use at least 30 minutes after brushing with toothpaste. Do not swallow; do not eat or drink for 30 minutes.',
+    qty: 473,
+    unit: 'mL (16 oz)',
+    refills: 0,
+    indication: 'Post-surgical plaque control / gingivitis',
+    drugIds: ['chlorhexidine'],
+    notes: ['Toothpaste (sodium lauryl sulfate) inactivates chlorhexidine — keep a 30-minute gap.'],
+    warning: 'May cause extrinsic brown staining, increased calculus and altered taste. Limit to 2–4 weeks; schedule a cleaning afterward.',
+  },
+  {
+    id: 'mi-paste',
+    group: 'Topical pastes & rinses',
+    tier: 'Demineralization / white spots',
+    drug: 'MI Paste (CPP-ACP) 40 g tube',
+    sig: 'After brushing at bedtime, apply a pea-sized amount to the teeth with a clean finger or tray; leave for 3 minutes, spread with the tongue and do not rinse. No food or drink for 30 minutes.',
+    qty: 1,
+    unit: 'tube (40 g)',
+    refills: 2,
+    indication: 'White-spot lesions / demineralization / sensitivity',
+    drugIds: ['cpp-acp'],
+    warning: 'Contraindicated with milk-protein (casein) allergy. MI Paste Plus also contains 900 ppm fluoride.',
+  },
+];
+
+const RX_GROUPS: { id: RxGroup; icon: LucideIcon; subtitle: string }[] = [
+  { id: 'Analgesics', icon: Pill, subtitle: 'ADA 2024 acute dental pain guideline' },
+  { id: 'Antibiotics', icon: ShieldCheck, subtitle: 'Odontogenic infection with systemic involvement only' },
+  { id: 'Antifungals', icon: Pill, subtitle: 'Denture stomatitis & oral candidiasis' },
+  { id: 'Antivirals', icon: Pill, subtitle: 'Herpes labialis' },
+  { id: 'Topical pastes & rinses', icon: Pill, subtitle: 'Ulcers, caries risk, plaque control' },
+];
+
+const DENTURE_HYGIENE = `DENTURE CARE DURING ANTIFUNGAL TREATMENT
+1. Take your dentures out at night and keep them out for at least 6–8 hours.
+2. Brush the dentures every day with a soft brush and a non-abrasive denture cleanser (not regular toothpaste).
+3. Soak them overnight in a denture-cleansing solution. Acrylic-only dentures may also be soaked for 10 minutes in 1 teaspoon of household bleach in 1 cup of water, then rinsed well — never bleach dentures with metal parts.
+4. Rinse the dentures thoroughly before putting them back in.
+5. Take each dose of medicine with the dentures out, then clean the dentures before reinserting them.
+6. Brush your gums, tongue and palate gently with a soft brush every day.
+7. Finish the full course of medicine even if your mouth feels better.
+8. Return if not improved in 2 weeks — an ill-fitting denture may need relining or replacement.`;
+
+const OPIOID_CALLOUT =
+  'ADA 2024: ibuprofen + acetaminophen is more effective than opioid combinations for acute dental pain and avoids opioid risks. Reserve opioids for when NSAIDs are contraindicated — shortest course, smallest quantity, with a PDMP check.';
+
+const STEWARDSHIP_CALLOUT =
+  'ADA 2019: antibiotics are not indicated for pulpitis, symptomatic apical periodontitis or a localized abscess without systemic signs. Definitive treatment (pulpectomy, I&D, extraction) comes first. Prescribe only with fever, malaise, lymphadenopathy, trismus or spreading swelling.';
+
+const CLINDAMYCIN_CALLOUT =
+  'Clindamycin carries an FDA boxed warning for C. difficile-associated diarrhea, including fatal colitis — the risk is higher than with other antibiotics, even after a single dose. AHA 2021 removed it from endocarditis prophylaxis. Use azithromycin for severe penicillin allergy where appropriate.';
+
+interface TrimesterInfo {
+  id: 't1' | 't2' | 't3';
+  title: string;
+  weeks: string;
+  headline: string;
+  bullets: string[];
+}
+
+const TRIMESTERS: TrimesterInfo[] = [
+  {
+    id: 't1',
+    title: '1st trimester',
+    weeks: 'Weeks 1–13',
+    headline: 'Emergency & necessary care; defer elective treatment',
+    bullets: [
+      'Organogenesis: the period of greatest fetal vulnerability to teratogens.',
+      'Treat pain and infection now — untreated dental infection is a greater risk than treatment.',
+      'Defer elective radiographs and non-urgent restorative work to the 2nd trimester; take radiographs that are needed for diagnosis.',
+      'Nausea and vomiting: short morning-free appointments; advise rinsing with water or a baking-soda solution after vomiting and waiting 30 min before brushing.',
+      'Avoid nitrous oxide.',
+    ],
+  },
+  {
+    id: 't2',
+    title: '2nd trimester',
+    weeks: 'Weeks 14–27',
+    headline: 'Safest window for routine care',
+    bullets: [
+      'Ideal time for restorative treatment, scaling and root planing and prophylaxis.',
+      'Treat pregnancy gingivitis and pyogenic granuloma (pregnancy epulis) as needed.',
+      'From 20 weeks: avoid NSAIDs (FDA 2020) — use acetaminophen.',
+      'Start positional precautions as the uterus enlarges (from ~20 weeks).',
+    ],
+  },
+  {
+    id: 't3',
+    title: '3rd trimester',
+    weeks: 'Weeks 28–40',
+    headline: 'Positional management; keep appointments short',
+    bullets: [
+      'Supine hypotensive syndrome risk — see the positioning protocol.',
+      'Keep appointments short; allow frequent breaks and bathroom visits.',
+      'NSAIDs contraindicated (ductus arteriosus closure).',
+      'Defer elective care late in the 3rd trimester; urgent care remains appropriate.',
+    ],
+  },
+];
+
+const SUPINE_PROTOCOL = {
+  prevent: [
+    'Semi-reclined rather than fully supine.',
+    'Place a towel or small pillow under the RIGHT hip to tilt the patient ~15° to the LEFT (moves the uterus off the inferior vena cava).',
+    'Short appointments; let her change position and sit up periodically.',
+  ],
+  signs: ['Dizziness or light-headedness', 'Pallor, sweating, nausea', 'Hypotension and tachycardia (or bradycardia)', 'Restlessness; feeling of faintness'],
+  manage: [
+    'Stop treatment and remove instruments from the mouth.',
+    'Roll the patient onto her LEFT side immediately.',
+    'Monitor BP and pulse; give oxygen if available.',
+    'Symptoms usually resolve within minutes. If not — activate emergency response.',
+  ],
+};
+
+const RADIOGRAPH_POINTS = [
+  'Diagnostic dental radiographs are safe in every trimester when there is a diagnostic need (ADA, ACOG, FDA). Do not delay needed care.',
+  'Fetal dose from a full-mouth series is a tiny fraction of natural background radiation and far below thresholds for harm.',
+  'ALARA / ALADA: digital receptors, rectangular collimation, only the images needed for diagnosis.',
+  'Shielding: ADA/FDA 2023 recommendations state routine abdominal and thyroid shielding is no longer necessary with modern technique. Follow your state regulations — many still require a lead apron with thyroid collar, and it reassures patients.',
+];
+
+const NITROUS_OCCUPATIONAL =
+  'Occupational exposure: chronic exposure to unscavenged nitrous oxide is associated with reduced fertility and spontaneous abortion in staff. Use a scavenging mask with adequate suction, check equipment for leaks, ventilate the operatory, minimize patient talking, and consider dosimetry monitoring. Pregnant staff may prefer not to assist with nitrous oxide cases.';
+
+/* -- Logic --------------------------------------------------------------- */
+
+function levelFor(drugId: string, status: PregnancyStatus): { level: SafetyLevel; note: string } | null {
+  const d = DRUG_BY_ID[drugId];
+  if (!d || status === 'none') return null;
+  if (status === 'lactating') return { level: d.lact, note: d.lactNote };
+  return { level: d.preg[status], note: d.pregNote };
+}
+
+const LEVEL_RANK: Record<SafetyLevel, number> = { preferred: 0, acceptable: 1, caution: 2, avoid: 3, contraindicated: 4 };
+
+/** Worst safety level across a preset's drugs for the selected status. */
+function presetSafety(p: RxPreset, status: PregnancyStatus): { level: SafetyLevel; notes: string[] } | null {
+  if (status === 'none') return null;
+  let worst: SafetyLevel = 'preferred';
+  const notes: string[] = [];
+  for (const id of p.drugIds) {
+    const r = levelFor(id, status);
+    if (!r) continue;
+    if (LEVEL_RANK[r.level] > LEVEL_RANK[worst]) worst = r.level;
+    if (LEVEL_RANK[r.level] >= LEVEL_RANK.caution) notes.push(`${DRUG_BY_ID[id].name}: ${r.note}`);
+  }
+  return { level: worst, notes };
+}
+
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+
+/** Spells out whole numbers (0–9999) for tamper-resistant quantities. */
+function numberToWords(n: number): string {
+  if (!Number.isFinite(n) || n < 0 || n > 9999 || Math.floor(n) !== n) return '';
+  if (n < 20) return ONES[n];
+  if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? `-${ONES[n % 10]}` : '');
+  if (n < 1000) return `${ONES[Math.floor(n / 100)]} hundred${n % 100 ? ` ${numberToWords(n % 100)}` : ''}`;
+  return `${numberToWords(Math.floor(n / 1000))} thousand${n % 1000 ? ` ${numberToWords(n % 1000)}` : ''}`;
+}
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function usDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+}
+
+function ageFrom(dobIso: string, onIso: string): number | null {
+  const a = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dobIso);
+  const b = /^(\d{4})-(\d{2})-(\d{2})$/.exec(onIso);
+  if (!a || !b) return null;
+  let age = Number(b[1]) - Number(a[1]);
+  if (Number(b[2]) < Number(a[2]) || (b[2] === a[2] && Number(b[3]) < Number(a[3]))) age -= 1;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+function rxMissing(f: RxForm, p: Prescriber): string[] {
+  const m: string[] = [];
+  if (!f.patient.trim()) m.push('Patient name');
+  if (!f.dob) m.push('Date of birth');
+  if (!f.drug.trim()) m.push('Medication');
+  if (!f.sig.trim()) m.push('SIG');
+  if (!f.qty.trim()) m.push('Quantity');
+  if (!p.name.trim()) m.push('Prescriber name');
+  if (!p.license.trim() && !p.npi.trim()) m.push('License # or NPI');
+  return m;
+}
+
+function buildRx(f: RxForm, p: Prescriber): string {
+  const blank = '______';
+  const qtyNum = Number(f.qty);
+  const qtyWords = numberToWords(qtyNum);
+  const refillNum = Number(f.refills || '0');
+  const lines: string[] = [];
+  const header = [p.practice, p.address, p.phone].filter((x) => x.trim());
+  if (header.length) lines.push(...header, '');
+  lines.push(`Prescriber: ${p.name || blank}${p.credentials ? `, ${p.credentials}` : ''}`);
+  lines.push(`License #: ${p.license || blank}    NPI: ${p.npi || blank}`);
+  lines.push('');
+  lines.push(`Patient: ${f.patient || blank}    DOB: ${usDate(f.dob) || blank}`);
+  lines.push(`Date: ${usDate(f.date) || blank}`);
+  lines.push('');
+  lines.push(`Rx: ${f.drug || blank}`);
+  lines.push(`Sig: ${f.sig || blank}`);
+  lines.push(`Disp: ${f.qty ? `#${f.qty}${qtyWords ? ` (${qtyWords})` : ''}` : blank} ${f.unit}`.trimEnd());
+  lines.push(`Refills: ${Number.isFinite(refillNum) ? `${refillNum} (${numberToWords(refillNum) || refillNum})` : blank}`);
+  if (f.indication.trim()) lines.push(`Indication: ${f.indication.trim()}`);
+  lines.push(f.daw ? 'Dispense as written — no substitution' : 'Generic substitution permitted');
+  lines.push('');
+  lines.push('Prescriber signature: ______________________');
+  return lines.join('\n');
+}
+
+function trimesterSummary(t: TrimesterInfo): string {
+  return [`${t.title.toUpperCase()} (${t.weeks}) — ${t.headline}`, ...t.bullets.map((b) => `• ${b}`)].join('\n');
+}
+
+function supineSummary(): string {
+  return [
+    'SUPINE HYPOTENSIVE SYNDROME (from ~20 weeks; most common in the 3rd trimester)',
+    'Cause: the gravid uterus compresses the inferior vena cava when supine, reducing venous return and cardiac output.',
+    'Prevent:',
+    ...SUPINE_PROTOCOL.prevent.map((x) => `• ${x}`),
+    'Signs:',
+    ...SUPINE_PROTOCOL.signs.map((x) => `• ${x}`),
+    'Manage:',
+    ...SUPINE_PROTOCOL.manage.map((x, i) => `${i + 1}. ${x}`),
+  ].join('\n');
+}
+
+function directorySummary(rows: DrugSafety[], status: PregnancyStatus): string {
+  const head = status === 'none' ? 'Dental drug safety — pregnancy (T1/T2/T3) & lactation' : `Dental drug safety — ${STATUS_LABEL[status]}`;
+  const body = rows.map((d) => {
+    if (status === 'lactating') return `• ${d.name}: ${LEVEL_STYLE[d.lact].label} — ${d.lactNote}`;
+    if (status === 't1' || status === 't2' || status === 't3') return `• ${d.name}: ${LEVEL_STYLE[d.preg[status]].label} — ${d.pregNote}`;
+    return `• ${d.name}: T1 ${LEVEL_STYLE[d.preg.t1].label} / T2 ${LEVEL_STYLE[d.preg.t2].label} / T3 ${LEVEL_STYLE[d.preg.t3].label}; lactation ${LEVEL_STYLE[d.lact].label}. ${d.pregNote}`;
+  });
+  return [head, ...body].join('\n');
+}
+
+const PRESCRIBER_KEY = 'chairside.rx.prescriber';
+const LAB_PROFILE_KEY = 'chairside.lab.profile';
+const EMPTY_PRESCRIBER: Prescriber = { name: '', credentials: 'DDS', license: '', npi: '', practice: '', address: '', phone: '' };
+
+/** Fields the clinician has edited in this hub (only these are saved). */
+function loadPrescriberEdits(): Partial<Prescriber> {
+  try {
+    const saved = window.localStorage.getItem(PRESCRIBER_KEY);
+    return saved ? (JSON.parse(saved) as Partial<Prescriber>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Prescriber details already entered in the workbench's lab prescription profile. */
+function labProfileDefaults(): Partial<Prescriber> {
+  try {
+    const lab = window.localStorage.getItem(LAB_PROFILE_KEY);
+    if (!lab) return {};
+    const l = JSON.parse(lab) as { dentist?: string; license?: string; practice?: string; phone?: string };
+    const out: Partial<Prescriber> = {};
+    if (l.dentist) out.name = l.dentist;
+    if (l.license) out.license = l.license;
+    if (l.practice) out.practice = l.practice;
+    if (l.phone) out.phone = l.phone;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function hubEscapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function printText(text: string, title: string): boolean {
+  try {
+    const w = window.open('', '_blank', 'width=720,height=900');
+    if (!w) return false;
+    w.document.write(
+      `<!doctype html><html><head><meta charset="utf-8"><title>${hubEscapeHtml(title)}</title>` +
+        '<style>body{margin:40px;color:#111}pre{white-space:pre-wrap;font:14px/1.6 ui-monospace,Menlo,Consolas,monospace}</style></head>' +
+        `<body><pre>${hubEscapeHtml(text)}</pre></body></html>`,
+    );
+    w.document.close();
+    w.focus();
+    w.print();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* -- UI primitives (local, high-contrast light theme) -------------------- */
+
+function cn(...c: Array<string | false | null | undefined>): string {
+  return c.filter(Boolean).join(' ');
+}
+
+const FOCUS = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2 focus-visible:ring-offset-white';
+const CARD = 'rounded-2xl border border-stone-300 bg-white shadow-sm';
+const INPUT =
+  'w-full rounded-xl border border-stone-300 bg-white px-3 text-sm text-stone-900 placeholder:text-stone-500 focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-200';
+
+function CopyBtn({
+  text,
+  label = 'Copy',
+  variant = 'ghost',
+  className,
+  onCopy,
+}: {
+  text: string;
+  label?: string;
+  variant?: 'ghost' | 'solid' | 'outline';
+  className?: string;
+  onCopy?: () => void;
+}) {
+  const [state, setState] = useState<'idle' | 'ok' | 'err'>('idle');
+  const base =
+    variant === 'solid'
+      ? 'bg-stone-900 text-white hover:bg-stone-800 border border-stone-900'
+      : variant === 'outline'
+        ? 'border border-stone-400 bg-white text-stone-900 hover:bg-stone-50'
+        : 'text-stone-800 hover:bg-stone-100';
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        onCopy?.();
+        const ok = await copyText(text);
+        setState(ok ? 'ok' : 'err');
+        window.setTimeout(() => setState('idle'), 1800);
+      }}
+      className={cn(
+        'inline-flex items-center justify-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition active:scale-[0.98]',
+        state === 'ok' ? 'border border-emerald-700 bg-emerald-700 text-white' : state === 'err' ? 'border border-rose-800 bg-rose-800 text-white' : base,
+        FOCUS,
+        className,
+      )}
+      aria-live="polite"
+    >
+      {state === 'ok' ? <ClipboardCheck className="h-4 w-4" aria-hidden /> : <ClipboardCopy className="h-4 w-4" aria-hidden />}
+      {state === 'ok' ? 'Copied' : state === 'err' ? 'Copy failed' : label}
+    </button>
+  );
+}
+
+function LevelBadge({ level, prefix }: { level: SafetyLevel; prefix?: string }) {
+  const s = LEVEL_STYLE[level];
+  return (
+    <span className={cn('inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-bold', s.cls)}>
+      {prefix && <span className="font-semibold">{prefix}</span>}
+      {s.label}
+    </span>
+  );
+}
+
+function HubCallout({ tone, title, children, copy }: { tone: 'warn' | 'alert' | 'info' | 'good'; title: string; children: React.ReactNode; copy?: string }) {
+  const style = {
+    warn: { box: 'border-amber-400 bg-amber-50', title: 'text-amber-900', body: 'text-amber-950', Icon: AlertTriangle, icon: 'text-amber-800' },
+    alert: { box: 'border-rose-300 border-l-4 border-l-rose-800 bg-rose-50', title: 'text-rose-900', body: 'text-rose-950', Icon: AlertTriangle, icon: 'text-rose-800' },
+    info: { box: 'border-stone-300 bg-stone-50', title: 'text-stone-900', body: 'text-stone-800', Icon: Info, icon: 'text-teal-800' },
+    good: { box: 'border-emerald-300 bg-emerald-50', title: 'text-emerald-900', body: 'text-emerald-950', Icon: CircleCheck, icon: 'text-emerald-800' },
+  }[tone];
+  return (
+    <div className={cn('flex gap-3 rounded-xl border p-3.5', style.box)}>
+      <style.Icon className={cn('mt-0.5 h-5 w-5 shrink-0', style.icon)} aria-hidden />
+      <div className="min-w-0 flex-1">
+        <p className={cn('text-[11px] font-bold uppercase tracking-wider', style.title)}>{title}</p>
+        <div className={cn('mt-0.5 text-sm leading-snug', style.body)}>{children}</div>
+      </div>
+      {copy && <CopyBtn text={copy} label="Copy" className="h-8 shrink-0 self-start text-xs" />}
+    </div>
+  );
+}
+
+function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+  return (
+    <label className={cn('block', className)}>
+      <span className="mb-1 block text-xs font-semibold text-stone-700">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function StatusPicker({ value, onChange }: { value: PregnancyStatus; onChange: (s: PregnancyStatus) => void }) {
+  const opts: PregnancyStatus[] = ['none', 't1', 't2', 't3', 'lactating'];
+  return (
+    <div className={cn(CARD, 'flex flex-wrap items-center gap-3 p-3')}>
+      <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-stone-800">
+        <Baby className="h-4 w-4 text-amber-800" aria-hidden />
+        Pregnancy status
+      </span>
+      <div role="radiogroup" aria-label="Pregnancy status" className="flex flex-wrap gap-1.5">
+        {opts.map((o) => (
+          <button
+            key={o}
+            type="button"
+            role="radio"
+            aria-checked={value === o}
+            onClick={() => onChange(o)}
+            className={cn(
+              'rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition',
+              value === o ? 'border-stone-900 bg-stone-900 text-white' : 'border-stone-300 bg-white text-stone-800 hover:border-amber-700',
+              FOCUS,
+            )}
+          >
+            {STATUS_LABEL[o]}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -- Tab 1 — Prescription writer ----------------------------------------- */
+
+function emptyForm(): RxForm {
+  return { patient: '', dob: '', date: todayIso(), presetId: '', drug: '', sig: '', qty: '', unit: '', refills: '0', indication: '', daw: false };
+}
+
+function applyPreset(f: RxForm, p: RxPreset): RxForm {
+  return { ...f, presetId: p.id, drug: p.drug, sig: p.sig, qty: String(p.qty), unit: p.unit, refills: String(p.refills), indication: p.indication };
+}
+
+function PresetCard({
+  preset,
+  status,
+  rxText,
+  onLoad,
+  active,
+}: {
+  preset: RxPreset;
+  status: PregnancyStatus;
+  rxText: string;
+  onLoad: () => void;
+  active: boolean;
+}) {
+  const safety = presetSafety(preset, status);
+  return (
+    <div className={cn('flex h-full flex-col rounded-2xl border bg-white p-4', active ? 'border-2 border-amber-700' : 'border-stone-300')}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="rounded-md bg-stone-100 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-stone-800">{preset.tier}</span>
+        {safety && <LevelBadge level={safety.level} prefix={`${STATUS_LABEL[status]}:`} />}
+      </div>
+      <h4 className="mt-2 text-sm font-bold text-stone-900">{preset.drug}</h4>
+      <p className="mt-1 text-sm leading-snug text-stone-800">{preset.sig}</p>
+      <p className="mt-1.5 text-xs font-semibold text-stone-700">
+        Disp: #{preset.qty} {preset.unit} · Refills: {preset.refills}
+      </p>
+      {preset.notes && (
+        <ul className="mt-2 space-y-0.5">
+          {preset.notes.map((n) => (
+            <li key={n} className="flex gap-1.5 text-xs text-stone-700">
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-700" aria-hidden />
+              {n}
+            </li>
+          ))}
+        </ul>
+      )}
+      {preset.warning && <p className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-950">{preset.warning}</p>}
+      {safety && safety.notes.length > 0 && (
+        <p
+          className={cn(
+            'mt-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium',
+            LEVEL_RANK[safety.level] >= 3 ? 'border-rose-300 bg-rose-50 text-rose-950' : 'border-amber-400 bg-amber-50 text-amber-950',
+          )}
+        >
+          {safety.notes.join(' ')}
+        </p>
+      )}
+      <div className="mt-auto flex gap-2 pt-3">
+        <CopyBtn text={rxText} label="Load & copy" variant="solid" className="h-9 flex-1" onCopy={onLoad} />
+        <button type="button" onClick={onLoad} className={cn('inline-flex h-9 items-center rounded-xl border border-stone-400 bg-white px-3 text-sm font-semibold text-stone-900 hover:bg-stone-50', FOCUS)}>
+          Load
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RxWriterTab({ status }: { status: PregnancyStatus }) {
+  const [form, setForm] = useState<RxForm>(emptyForm);
+  const [edits, setEdits] = useState<Partial<Prescriber>>(loadPrescriberEdits);
+  const prescriber: Prescriber = { ...EMPTY_PRESCRIBER, ...labProfileDefaults(), ...edits };
+  const [prescriberOpen, setPrescriberOpen] = useState(() => !({ ...labProfileDefaults(), ...loadPrescriberEdits() }).name);
+  const [printBlocked, setPrintBlocked] = useState(false);
+  const [group, setGroup] = useState<RxGroup | 'All'>('All');
+
+  useEffect(() => {
+    if (Object.keys(edits).length === 0) return;
+    try {
+      window.localStorage.setItem(PRESCRIBER_KEY, JSON.stringify(edits));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [edits]);
+
+  const set = <K extends keyof RxForm>(k: K, v: RxForm[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const setP = <K extends keyof Prescriber>(k: K, v: Prescriber[K]) => setEdits((p) => ({ ...p, [k]: v }));
+  const rx = buildRx(form, prescriber);
+  const missing = rxMissing(form, prescriber);
+  const activePreset = RX_PRESETS.find((p) => p.id === form.presetId);
+  const activeSafety = activePreset ? presetSafety(activePreset, status) : null;
+  const age = ageFrom(form.dob, form.date);
+
+  const load = (p: RxPreset) => {
+    setForm((f) => applyPreset(f, p));
+    document.getElementById('rx-writer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* ------------------------------- Writer ------------------------------- */}
+      <section id="rx-writer" className="grid scroll-mt-4 gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className={cn(CARD, 'space-y-4 p-4')}>
+          <div className="flex items-center gap-2">
+            <Pill className="h-5 w-5 text-amber-800" aria-hidden />
+            <h3 className="text-base font-bold text-stone-900">Prescription writer</h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Patient name" className="sm:col-span-2">
+              <input value={form.patient} onChange={(e) => set('patient', e.target.value)} className={cn(INPUT, 'h-10')} placeholder="First Last" autoComplete="off" />
+            </Field>
+            <Field label="Date of birth">
+              <input type="date" value={form.dob} onChange={(e) => set('dob', e.target.value)} className={cn(INPUT, 'h-10')} />
+            </Field>
+            <Field label="Date">
+              <input type="date" value={form.date} onChange={(e) => set('date', e.target.value)} className={cn(INPUT, 'h-10')} />
+            </Field>
+            <Field label="Medication" className="sm:col-span-2">
+              <select
+                value={form.presetId}
+                onChange={(e) => {
+                  const p = RX_PRESETS.find((x) => x.id === e.target.value);
+                  if (p) setForm((f) => applyPreset(f, p));
+                  else setForm((f) => ({ ...f, presetId: '' }));
+                }}
+                className={cn(INPUT, 'h-10')}
+              >
+                <option value="">Custom — type below</option>
+                {RX_GROUPS.map((g) => (
+                  <optgroup key={g.id} label={g.id}>
+                    {RX_PRESETS.filter((p) => p.group === g.id).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.drug} — {p.tier}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </Field>
+            <Field label="Drug, strength & form" className="sm:col-span-3">
+              <input value={form.drug} onChange={(e) => set('drug', e.target.value)} className={cn(INPUT, 'h-10')} placeholder="e.g. Amoxicillin 500 mg capsule" />
+            </Field>
+            <Field label="SIG (instructions)" className="sm:col-span-3">
+              <textarea rows={3} value={form.sig} onChange={(e) => set('sig', e.target.value)} className={cn(INPUT, 'py-2')} placeholder="Take 1 capsule by mouth three times daily for 7 days." />
+            </Field>
+            <Field label="Quantity / dispense">
+              <div className="flex gap-2">
+                <input inputMode="numeric" value={form.qty} onChange={(e) => set('qty', e.target.value.replace(/[^\d]/g, ''))} className={cn(INPUT, 'h-10 w-24 tabular-nums')} aria-label="Quantity" />
+                <input value={form.unit} onChange={(e) => set('unit', e.target.value)} className={cn(INPUT, 'h-10')} placeholder="tablets" aria-label="Unit" />
+              </div>
+            </Field>
+            <Field label="Refills">
+              <input inputMode="numeric" value={form.refills} onChange={(e) => set('refills', e.target.value.replace(/[^\d]/g, ''))} className={cn(INPUT, 'h-10 tabular-nums')} />
+            </Field>
+            <Field label="Indication">
+              <input value={form.indication} onChange={(e) => set('indication', e.target.value)} className={cn(INPUT, 'h-10')} placeholder="e.g. Acute dental pain" />
+            </Field>
+          </div>
+          <label className="flex items-center gap-2.5 text-sm font-medium text-stone-900">
+            <input type="checkbox" checked={form.daw} onChange={(e) => set('daw', e.target.checked)} className="h-4 w-4 accent-amber-700" />
+            Dispense as written (no generic substitution)
+          </label>
+
+          <div className="rounded-xl border border-stone-300">
+            <button
+              type="button"
+              onClick={() => setPrescriberOpen((o) => !o)}
+              aria-expanded={prescriberOpen}
+              className={cn('flex w-full items-center justify-between rounded-xl bg-stone-50 px-3 py-2.5 text-left', FOCUS)}
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                <UserRound className="h-4 w-4 text-amber-800" aria-hidden />
+                Prescriber
+                <span className="text-xs font-normal text-stone-700">
+                  {prescriber.name ? `${prescriber.name}${prescriber.npi ? ` · NPI ${prescriber.npi}` : ''}` : 'Saved once in this browser'}
+                </span>
+              </span>
+              <ChevronDown className={cn('h-4 w-4 text-stone-700 transition-transform', prescriberOpen && 'rotate-180')} aria-hidden />
+            </button>
+            {prescriberOpen && (
+              <div className="grid gap-3 p-3 sm:grid-cols-2">
+                <Field label="Name">
+                  <input value={prescriber.name} onChange={(e) => setP('name', e.target.value)} className={cn(INPUT, 'h-10')} placeholder="Dr. A. Smith" />
+                </Field>
+                <Field label="Credentials">
+                  <input value={prescriber.credentials} onChange={(e) => setP('credentials', e.target.value)} className={cn(INPUT, 'h-10')} placeholder="DDS / DMD" />
+                </Field>
+                <Field label="State license #">
+                  <input value={prescriber.license} onChange={(e) => setP('license', e.target.value)} className={cn(INPUT, 'h-10')} />
+                </Field>
+                <Field label="NPI">
+                  <input value={prescriber.npi} onChange={(e) => setP('npi', e.target.value.replace(/[^\d]/g, '').slice(0, 10))} className={cn(INPUT, 'h-10 tabular-nums')} inputMode="numeric" />
+                </Field>
+                <Field label="Practice">
+                  <input value={prescriber.practice} onChange={(e) => setP('practice', e.target.value)} className={cn(INPUT, 'h-10')} />
+                </Field>
+                <Field label="Phone">
+                  <input value={prescriber.phone} onChange={(e) => setP('phone', e.target.value)} className={cn(INPUT, 'h-10')} />
+                </Field>
+                <Field label="Address" className="sm:col-span-2">
+                  <input value={prescriber.address} onChange={(e) => setP('address', e.target.value)} className={cn(INPUT, 'h-10')} />
+                </Field>
+                <p className="text-xs text-stone-700 sm:col-span-2">
+                  DEA number is required only for controlled substances and is left off non-controlled prescriptions to limit its exposure. None of the presets are controlled.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="space-y-3 lg:sticky lg:top-0 lg:self-start">
+          <div className={cn('rounded-2xl border p-3', missing.length ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-emerald-50')} role="status">
+            <p className={cn('flex items-center gap-2 text-sm font-semibold', missing.length ? 'text-amber-950' : 'text-emerald-900')}>
+              {missing.length ? <AlertTriangle className="h-4 w-4" aria-hidden /> : <CircleCheck className="h-4 w-4" aria-hidden />}
+              {missing.length ? `Missing: ${missing.join(', ')}` : 'Prescription complete'}
+            </p>
+          </div>
+          {activeSafety && LEVEL_RANK[activeSafety.level] >= 2 && (
+            <HubCallout tone={LEVEL_RANK[activeSafety.level] >= 3 ? 'alert' : 'warn'} title={`${STATUS_LABEL[status]} — ${LEVEL_STYLE[activeSafety.level].label}`}>
+              {activeSafety.notes.join(' ')}
+            </HubCallout>
+          )}
+          {age !== null && age < 18 && (
+            <HubCallout tone="warn" title="Pediatric patient">
+              Age {age}: presets are adult doses. Use weight-based pediatric dosing{age < 6 ? '; 1.1% NaF toothpaste is not for children under 6' : ''}.
+            </HubCallout>
+          )}
+          <div className={cn(CARD, 'overflow-hidden')}>
+            <div className="flex items-center justify-between border-b border-stone-300 px-4 py-2.5">
+              <p className="text-xs font-bold uppercase tracking-wider text-stone-800">Prescription preview</p>
+              <span className="font-serif text-xl font-bold italic text-amber-800" aria-hidden>
+                ℞
+              </span>
+            </div>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed text-stone-900">{rx}</pre>
+          </div>
+          <div className={cn('grid gap-2', printAvailable() ? 'grid-cols-2' : 'grid-cols-1')}>
+            <CopyBtn text={rx} label="Copy Rx" variant="outline" className="h-11" />
+            {printAvailable() && (
+              <button type="button" onClick={() => setPrintBlocked(!printText(rx, 'Prescription'))} className={cn('inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-stone-900 text-sm font-semibold text-white hover:bg-stone-800', FOCUS)}>
+                <Printer className="h-4 w-4" aria-hidden />
+                Print
+              </button>
+            )}
+          </div>
+          {printBlocked && <p className="text-xs font-medium text-rose-800">The print window was blocked — allow pop-ups or use Copy Rx.</p>}
+          <button type="button" onClick={() => setForm(emptyForm())} className={cn('h-9 w-full rounded-xl text-sm font-semibold text-stone-800 hover:bg-stone-100', FOCUS)}>
+            Clear form
+          </button>
+          <p className="text-xs leading-snug text-stone-700">Patient details are not saved. Verify allergies, current medications, renal/hepatic function and the PDMP where required.</p>
+        </aside>
+      </section>
+
+      {/* ------------------------------ Presets ------------------------------- */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-base font-bold text-stone-900">Common dental prescriptions</h3>
+          <div role="radiogroup" aria-label="Preset group" className="flex flex-wrap gap-1.5">
+            {(['All', ...RX_GROUPS.map((g) => g.id)] as (RxGroup | 'All')[]).map((g) => (
+              <button
+                key={g}
+                type="button"
+                role="radio"
+                aria-checked={group === g}
+                onClick={() => setGroup(g)}
+                className={cn(
+                  'rounded-full border px-3 py-1 text-xs font-semibold',
+                  group === g ? 'border-amber-700 bg-amber-700 text-white' : 'border-stone-300 bg-white text-stone-800 hover:border-amber-700',
+                  FOCUS,
+                )}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {RX_GROUPS.filter((g) => group === 'All' || g.id === group).map((g) => (
+          <div key={g.id} className="space-y-3">
+            <div className="flex items-baseline gap-2">
+              <h4 className="text-sm font-bold uppercase tracking-wider text-amber-900">{g.id}</h4>
+              <span className="text-xs text-stone-700">{g.subtitle}</span>
+            </div>
+            {g.id === 'Analgesics' && (
+              <HubCallout tone="good" title="Opioid-sparing" copy={OPIOID_CALLOUT}>
+                {OPIOID_CALLOUT}
+              </HubCallout>
+            )}
+            {g.id === 'Antibiotics' && (
+              <HubCallout tone="info" title="Antibiotic stewardship" copy={STEWARDSHIP_CALLOUT}>
+                {STEWARDSHIP_CALLOUT}
+              </HubCallout>
+            )}
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {RX_PRESETS.filter((p) => p.group === g.id).map((p) => (
+                <PresetCard key={p.id} preset={p} status={status} rxText={buildRx(applyPreset(form, p), prescriber)} onLoad={() => load(p)} active={form.presetId === p.id} />
+              ))}
+            </div>
+            {g.id === 'Antibiotics' && (
+              <HubCallout tone="alert" title="Clindamycin — boxed warning" copy={CLINDAMYCIN_CALLOUT}>
+                {CLINDAMYCIN_CALLOUT}
+              </HubCallout>
+            )}
+            {g.id === 'Antifungals' && (
+              <div className={cn(CARD, 'p-4')}>
+                <div className="flex items-start justify-between gap-3">
+                  <h5 className="text-sm font-bold text-stone-900">Denture hygiene instructions (patient handout)</h5>
+                  <CopyBtn text={DENTURE_HYGIENE} label="Copy instructions" variant="outline" className="h-8 shrink-0 text-xs" />
+                </div>
+                <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-relaxed text-stone-800">{DENTURE_HYGIENE.split('\n').slice(1).join('\n')}</pre>
+              </div>
+            )}
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+/* -- Tab 2 — Pregnancy & lactation reference ----------------------------- */
+
+const DRUG_GROUPS: DrugGroup[] = ['Local anesthetics', 'Analgesics', 'Antibiotics', 'Antifungals & antivirals', 'Topicals & rinses', 'Sedation'];
+
+function PregnancyTab({ status }: { status: PregnancyStatus }) {
+  const [filter, setFilter] = useState<DrugGroup | 'All'>('All');
+  const [query, setQuery] = useState('');
+  const rows = useMemo(
+    () =>
+      DRUG_SAFETY.filter((d) => (filter === 'All' || d.group === filter) && (!query.trim() || `${d.name} ${d.group}`.toLowerCase().includes(query.trim().toLowerCase()))),
+    [filter, query],
+  );
+  const trimesterFocus = status === 't1' || status === 't2' || status === 't3' ? status : null;
+
+  return (
+    <div className="space-y-6">
+      {/* ----------------------------- Trimesters ----------------------------- */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="h-5 w-5 text-amber-800" aria-hidden />
+          <h3 className="text-base font-bold text-stone-900">Trimester-by-trimester protocol</h3>
+        </div>
+        <HubCallout tone="info" title="ACOG / ADA">
+          Pregnancy is not a reason to delay needed dental care. Diagnosis, radiographs, local anesthesia and treatment of pain and infection are safe in every trimester; elective care is
+          timed for comfort and convenience.
+        </HubCallout>
+        <div className="grid gap-3 lg:grid-cols-3">
+          {TRIMESTERS.map((t) => {
+            const focus = trimesterFocus === t.id;
+            return (
+              <div key={t.id} className={cn('flex flex-col rounded-2xl border bg-white p-4', focus ? 'border-2 border-amber-700 shadow-md' : 'border-stone-300')}>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-900">{t.weeks}</p>
+                    <h4 className="text-lg font-bold text-stone-900">{t.title}</h4>
+                  </div>
+                  {focus && <span className="rounded-md bg-amber-700 px-1.5 py-0.5 text-[11px] font-bold text-white">Current</span>}
+                </div>
+                <p
+                  className={cn(
+                    'mt-2 rounded-lg px-2.5 py-1.5 text-sm font-semibold',
+                    t.id === 't2' ? 'bg-emerald-50 text-emerald-900' : t.id === 't1' ? 'bg-amber-50 text-amber-950' : 'bg-rose-50 text-rose-900',
+                  )}
+                >
+                  {t.headline}
+                </p>
+                <ul className="mt-3 space-y-1.5">
+                  {t.bullets.map((b) => (
+                    <li key={b} className="flex gap-2 text-sm leading-snug text-stone-800">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+                      {b}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-auto pt-3">
+                  <CopyBtn text={trimesterSummary(t)} label="Copy summary" variant="outline" className="h-8 text-xs" />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* -------------------------- Supine hypotension ------------------------ */}
+      <section className={cn(CARD, 'p-4')}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Bed className="h-5 w-5 text-rose-800" aria-hidden />
+            <div>
+              <h3 className="text-base font-bold text-stone-900">Supine hypotensive syndrome</h3>
+              <p className="text-xs text-stone-700">Gravid uterus compresses the inferior vena cava — from ~20 weeks, most common in the 3rd trimester</p>
+            </div>
+          </div>
+          <CopyBtn text={supineSummary()} label="Copy protocol" variant="outline" className="h-8 text-xs" />
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
+          <figure className="rounded-xl border border-stone-300 bg-stone-50 p-2">
+            <svg viewBox="0 0 220 150" className="h-auto w-full" role="img" aria-label="Patient tilted 15 degrees to the left with a wedge under the right hip, viewed from the head of the chair">
+              <text x="110" y="22" textAnchor="middle" className="fill-rose-800 text-[12px] font-bold">
+                15° left tilt
+              </text>
+              <line x1="20" y1="112" x2="200" y2="112" className="stroke-stone-500" strokeWidth={2} />
+              <g transform="rotate(-15 110 92)">
+                <rect x="40" y="70" width="140" height="40" rx="18" className="fill-amber-100 stroke-stone-700" strokeWidth={2} />
+                <circle cx="110" cy="86" r="16" className="fill-amber-300 stroke-stone-700" strokeWidth={1.5} />
+                <text x="110" y="90" textAnchor="middle" className="fill-stone-900 text-[9px] font-bold">
+                  uterus
+                </text>
+              </g>
+              <path d="M150 112 L190 112 L190 82 Z" className="fill-stone-400 stroke-stone-700" strokeWidth={1.5} />
+              <text x="10" y="128" className="fill-stone-800 text-[10px] font-semibold">
+                ← Pt LEFT side down
+              </text>
+              <text x="212" y="143" textAnchor="end" className="fill-stone-800 text-[10px] font-semibold">
+                Wedge under RIGHT hip →
+              </text>
+            </svg>
+            <figcaption className="px-1 text-center text-[11px] text-stone-700">Viewed from the head of the chair (schematic)</figcaption>
+          </figure>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                { title: 'Prevent', items: SUPINE_PROTOCOL.prevent, tone: 'border-emerald-300 bg-emerald-50', head: 'text-emerald-900' },
+                { title: 'Recognize', items: SUPINE_PROTOCOL.signs, tone: 'border-amber-400 bg-amber-50', head: 'text-amber-900' },
+                { title: 'Manage', items: SUPINE_PROTOCOL.manage, tone: 'border-rose-300 bg-rose-50', head: 'text-rose-900' },
+              ] as const
+            ).map((b) => (
+              <div key={b.title} className={cn('rounded-xl border p-3', b.tone)}>
+                <p className={cn('text-xs font-bold uppercase tracking-wider', b.head)}>{b.title}</p>
+                <ol className="mt-1.5 space-y-1">
+                  {b.items.map((x, i) => (
+                    <li key={x} className="flex gap-1.5 text-sm leading-snug text-stone-900">
+                      <span className="font-bold tabular-nums">{b.title === 'Manage' ? `${i + 1}.` : '•'}</span>
+                      {x}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------ Radiographs ---------------------------- */}
+      <section className={cn(CARD, 'p-4')}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Radiation className="h-5 w-5 text-amber-800" aria-hidden />
+            <h3 className="text-base font-bold text-stone-900">Diagnostic radiographs in pregnancy</h3>
+          </div>
+          <CopyBtn text={['DENTAL RADIOGRAPHS IN PREGNANCY', ...RADIOGRAPH_POINTS.map((x) => `• ${x}`)].join('\n')} label="Copy" variant="outline" className="h-8 text-xs" />
+        </div>
+        <ul className="mt-3 grid gap-2 md:grid-cols-2">
+          {RADIOGRAPH_POINTS.map((x) => (
+            <li key={x} className="flex gap-2 rounded-xl border border-stone-300 bg-stone-50 p-3 text-sm leading-snug text-stone-900">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+              {x}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {/* --------------------------- Drug directory --------------------------- */}
+      <section className={cn(CARD, 'overflow-hidden')}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-300 p-4">
+          <div className="flex items-center gap-2">
+            <Syringe className="h-5 w-5 text-amber-800" aria-hidden />
+            <div>
+              <h3 className="text-base font-bold text-stone-900">Dental drug safety — pregnancy & lactation</h3>
+              <p className="text-xs text-stone-700">
+                {status === 'none' ? 'Showing all trimesters and lactation' : `Highlighted for: ${STATUS_LABEL[status]}`} · legacy FDA letters for reference only (replaced by PLLR in 2015)
+              </p>
+            </div>
+          </div>
+          <CopyBtn text={directorySummary(rows, status)} label="Copy table" variant="outline" className="h-8 text-xs" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-stone-300 bg-stone-50 px-4 py-3">
+          <div className="relative w-full sm:w-56">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-600" aria-hidden />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a drug…" aria-label="Find a drug" className={cn(INPUT, 'h-9 pl-8')} />
+          </div>
+          <div role="radiogroup" aria-label="Drug group" className="flex flex-wrap gap-1.5">
+            {(['All', ...DRUG_GROUPS] as (DrugGroup | 'All')[]).map((g) => (
+              <button
+                key={g}
+                type="button"
+                role="radio"
+                aria-checked={filter === g}
+                onClick={() => setFilter(g)}
+                className={cn(
+                  'rounded-full border px-2.5 py-1 text-xs font-semibold',
+                  filter === g ? 'border-stone-900 bg-stone-900 text-white' : 'border-stone-300 bg-white text-stone-800 hover:border-amber-700',
+                  FOCUS,
+                )}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-stone-300 bg-stone-100 text-[11px] uppercase tracking-wider text-stone-800">
+                <th scope="col" className="px-4 py-2.5 font-bold">Drug</th>
+                <th scope="col" className={cn('px-2 py-2.5 font-bold', trimesterFocus === 't1' && 'bg-amber-100')}>T1</th>
+                <th scope="col" className={cn('px-2 py-2.5 font-bold', trimesterFocus === 't2' && 'bg-amber-100')}>T2</th>
+                <th scope="col" className={cn('px-2 py-2.5 font-bold', trimesterFocus === 't3' && 'bg-amber-100')}>T3</th>
+                <th scope="col" className={cn('px-2 py-2.5 font-bold', status === 'lactating' && 'bg-amber-100')}>Lactation</th>
+                <th scope="col" className="px-4 py-2.5 font-bold">Notes</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-300">
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-stone-700">
+                    No drugs match “{query}”.
+                  </td>
+                </tr>
+              )}
+              {rows.map((d) => (
+                <tr key={d.id} className="align-top hover:bg-amber-50">
+                  <th scope="row" className="px-4 py-3 font-semibold text-stone-900">
+                    {d.name}
+                    <span className="block text-[11px] font-medium text-stone-700">
+                      {d.group}
+                      {d.legacy ? ` · legacy ${d.legacy}` : ''}
+                    </span>
+                  </th>
+                  {(['t1', 't2', 't3'] as const).map((t) => (
+                    <td key={t} className={cn('px-2 py-3', trimesterFocus === t && 'bg-amber-50')}>
+                      <LevelBadge level={d.preg[t]} />
+                    </td>
+                  ))}
+                  <td className={cn('px-2 py-3', status === 'lactating' && 'bg-amber-50')}>
+                    <LevelBadge level={d.lact} />
+                  </td>
+                  <td className="px-4 py-3 text-sm leading-snug text-stone-800">
+                    {status === 'lactating' ? d.lactNote : d.pregNote}
+                    {status === 'none' && <span className="mt-1 block text-xs text-stone-700">Lactation: {d.lactNote}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <HubCallout tone="warn" title="Nitrous oxide — occupational safety" copy={NITROUS_OCCUPATIONAL}>
+        {NITROUS_OCCUPATIONAL}
+      </HubCallout>
+      <p className="text-xs leading-snug text-stone-700">
+        Chairside reference only. Coordinate with the patient’s obstetrician for medically complex pregnancies, and check current labeling (FDA Pregnancy and Lactation Labeling Rule) and
+        LactMed for individual drugs.
+      </p>
+    </div>
+  );
+}
+
+/* -- Hub ----------------------------------------------------------------- */
+
+function PrescriptionAndPregnancyHub({ defaultTab = 'rx' }: { defaultTab?: HubTab }) {
+  const [tab, setTab] = useState<HubTab>(defaultTab);
+  const [status, setStatus] = useState<PregnancyStatus>('none');
+  const tabs: { id: HubTab; label: string; icon: LucideIcon }[] = [
+    { id: 'rx', label: 'Prescriptions (Rx)', icon: Pill },
+    { id: 'pregnancy', label: 'Pregnancy & lactation', icon: Baby },
+  ];
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="Hub section" className="grid grid-cols-2 gap-1 rounded-2xl border border-stone-300 bg-stone-100 p-1">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              'inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold transition',
+              tab === t.id ? 'bg-white text-stone-900 shadow-sm ring-1 ring-stone-300' : 'text-stone-700 hover:text-stone-900',
+              FOCUS,
+            )}
+          >
+            <t.icon className={cn('h-4 w-4', tab === t.id ? 'text-amber-700' : 'text-stone-600')} aria-hidden />
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <StatusPicker value={status} onChange={setStatus} />
+      {status !== 'none' && tab === 'rx' && (
+        <p className="flex items-center gap-2 text-xs font-medium text-stone-800">
+          <HeartPulse className="h-4 w-4 text-rose-800" aria-hidden />
+          Every preset and the live prescription are flagged for {STATUS_LABEL[status].toLowerCase()}.
+          <button type="button" onClick={() => setTab('pregnancy')} className="font-semibold text-amber-900 underline underline-offset-2">
+            Open the reference
+          </button>
+        </p>
+      )}
+      <div role="tabpanel">{tab === 'rx' ? <RxWriterTab status={status} /> : <PregnancyTab status={status} />}</div>
+      <p className="flex items-center gap-1.5 text-[11px] text-stone-700">
+        <Stethoscope className="h-3.5 w-3.5" aria-hidden />
+        Decision support only — confirm doses, allergies and interactions for each patient.
+      </p>
+    </div>
+  );
+}
+
+
+/* ========================================================================== */
 /* 8. PROCEDURE WORKSPACE                                                     */
 /* ========================================================================== */
 
@@ -11371,6 +14613,7 @@ function OperatoryMode({
             {tooth && <span className="ml-3 rounded-md bg-amber-500 px-1.5 py-0.5 font-mono text-stone-950">#{tooth.id}</span>}
           </p>
           <p className="truncate text-lg font-semibold text-stone-100 lg:text-xl">{procedure.title}</p>
+          <p className="text-xs text-stone-300">Educational reference only · verify before clinical use · {copyrightLine()}</p>
         </div>
         <div className="hidden items-center gap-1 lg:flex" aria-hidden>
           {procedure.steps.map((s, i) => (
@@ -11749,10 +14992,683 @@ function ProcedureView({
 
 
 /* ========================================================================== */
+/* 8b. LEGAL — notices, policies, acceptance                                  */
+/*                                                                            */
+/* Copyright notice, educational-use disclaimer, Terms of Service, Acceptable */
+/* Use Policy and Privacy Policy, plus a first-use acceptance screen          */
+/* (clickwrap) recorded with the policy version.                              */
+/*                                                                            */
+/* BEFORE PUBLISHING: replace every [bracketed] placeholder in LEGAL below,   */
+/* and have a licensed attorney review these documents. They are templates,  */
+/* not legal advice. Bump LEGAL.version whenever the documents change — users */
+/* are then asked to accept again.                                            */
+/*                                                                            */
+/* The Privacy Policy describes this file's actual behavior: everything is    */
+/* stored in the browser's localStorage under the "chairside." prefix and     */
+/* nothing is transmitted. Update the policy if that changes (accounts,       */
+/* analytics, sync, contact forms).                                           */
+/* ========================================================================== */
+
+const LEGAL = {
+  company: 'Cuspline LLC',
+  product: 'Chairside',
+  /** Change whenever any legal document changes; users must accept again. */
+  version: '2026-10-02',
+  effectiveDate: 'October 2, 2026',
+  firstYear: 2026,
+  contactEmail: '[legal@your-domain.com]',
+  mailingAddress: '[Cuspline LLC mailing address]',
+  governingState: '[State of organization, e.g. California]',
+  venue: '[County, State]',
+} as const;
+
+function copyrightYears(): string {
+  const now = new Date().getFullYear();
+  return now > LEGAL.firstYear ? `${LEGAL.firstYear}–${now}` : String(LEGAL.firstYear);
+}
+
+function copyrightLine(): string {
+  return `© ${copyrightYears()} ${LEGAL.company}. All rights reserved.`;
+}
+
+type LegalDocId = 'disclaimer' | 'terms' | 'aup' | 'privacy';
+
+/** A section body item: a paragraph, or a bullet list. */
+type LegalBlock = string | string[];
+
+interface LegalDoc {
+  id: LegalDocId;
+  title: string;
+  short: string;
+  intro: string;
+  sections: { heading: string; body: LegalBlock[] }[];
+}
+
+const L = LEGAL;
+
+const LEGAL_DOCS: LegalDoc[] = [
+  {
+    id: 'disclaimer',
+    title: 'Educational Use & Medical Disclaimer',
+    short: 'Disclaimer',
+    intro: `${L.product} is an educational reference published by ${L.company}. Please read this disclaimer carefully; it forms part of the Terms of Service.`,
+    sections: [
+      {
+        heading: '1. For dental education only',
+        body: [
+          `${L.product} (the “Service”) is provided solely for dental education and general reference by licensed dental professionals, dental and dental hygiene students and residents working under faculty supervision, and dental educators. It is not intended for patients or the general public.`,
+        ],
+      },
+      {
+        heading: '2. Not a diagnosis, treatment or professional advice',
+        body: [
+          'Nothing in the Service is a diagnosis, a treatment plan, a prescription, or medical or dental advice. Protocols, calculators and decision tools — including the anesthetic dose calculator, endodontic diagnosis wizard, vitals and antibiotic prophylaxis tools, prescription and laboratory templates, and pregnancy and lactation drug information — produce general educational output based only on the information entered and on published sources available at the time of writing.',
+        ],
+      },
+      {
+        heading: '3. Your professional judgment governs',
+        body: [
+          'Every clinical decision remains the sole responsibility of the treating licensed clinician. Before any clinical use you must independently verify all content against the patient’s full history and current manufacturer instructions for use, product labeling, clinical practice guidelines and the laws of your jurisdiction, including:',
+          [
+            'drug selection, dose, frequency, duration, maximum doses and quantities;',
+            'allergies, contraindications, drug interactions, pregnancy and lactation status, and renal and hepatic function;',
+            'material, preparation and laboratory specifications;',
+            'the need to consult the patient’s physicians or specialists.',
+          ],
+        ],
+      },
+      {
+        heading: '4. No professional relationship',
+        body: [`Using the Service does not create a dentist–patient, doctor–patient or any other professional relationship with ${L.company} or its contributors.`],
+      },
+      {
+        heading: '5. Not a medical device',
+        body: [
+          'The Service has not been reviewed, cleared or approved by the U.S. Food and Drug Administration or any other regulatory authority, and is not intended for use in the diagnosis, cure, mitigation, treatment or prevention of disease.',
+        ],
+      },
+      {
+        heading: '6. Accuracy and currency',
+        body: [
+          `Clinical knowledge, guidelines and drug labeling change frequently. Content may contain errors or omissions or become outdated. ${L.company} makes no representation that any content is complete, accurate or current. Product and brand names are used for identification only.`,
+        ],
+      },
+      {
+        heading: '7. Templates and documents you create',
+        body: [
+          'SOAP note, prescription and laboratory prescription templates are educational examples. Any note, prescription or work authorization you complete, sign, send or file is your own professional act, and you are solely responsible for its content and legality.',
+        ],
+      },
+      {
+        heading: '8. Not for emergencies',
+        body: ['Do not use the Service in an emergency. In a medical emergency, call 911 or your local emergency number.'],
+      },
+      {
+        heading: '9. Use at your own risk',
+        body: [`You use the Service at your own risk. See the Terms of Service for the full disclaimer of warranties and limitation of liability.`],
+      },
+    ],
+  },
+  {
+    id: 'terms',
+    title: 'Terms of Service',
+    short: 'Terms',
+    intro: `These Terms of Service (“Terms”) are a binding agreement between you and ${L.company} (“${L.company}”, “we”, “us”) governing your use of ${L.product} (the “Service”). Section 15 contains a binding arbitration agreement and class action waiver.`,
+    sections: [
+      {
+        heading: '1. Acceptance',
+        body: [
+          'By clicking “Agree and continue”, or by accessing or using the Service, you agree to these Terms, the Acceptable Use Policy, the Privacy Policy and the Educational Use & Medical Disclaimer (together, the “Agreement”). If you use the Service for an organization, you represent that you are authorized to bind it. If you do not agree, do not use the Service.',
+        ],
+      },
+      {
+        heading: '2. Eligibility',
+        body: [
+          'You must be at least 18 years old and a licensed dental professional, a dental or dental hygiene student or resident, a dental educator, or another healthcare professional using the Service for education. Students must use the Service under the supervision of their faculty and institution policies.',
+        ],
+      },
+      {
+        heading: '3. Educational purpose; no professional advice',
+        body: ['The Service is for education and general reference only. The Educational Use & Medical Disclaimer is incorporated into these Terms.'],
+      },
+      {
+        heading: '4. License',
+        body: [
+          `Subject to the Agreement, ${L.company} grants you a limited, revocable, non-exclusive, non-transferable, non-sublicensable license to access and use the Service for your own educational and professional reference. All rights not expressly granted are reserved.`,
+        ],
+      },
+      {
+        heading: '5. Intellectual property',
+        body: [
+          `The Service — including its software, source code, design, text, protocols as compiled and arranged, diagrams, calculators, templates, and the ${L.product} and ${L.company} names and logos — is owned by ${L.company} or its licensors and is protected by copyright, trademark and other laws. ${copyrightLine()}`,
+          'Third-party names, including product, material and manufacturer brands and guideline organizations, are trademarks of their respective owners and are used for identification only. Their use does not imply any affiliation with or endorsement by those owners.',
+        ],
+      },
+      {
+        heading: '6. Acceptable use',
+        body: ['You must comply with the Acceptable Use Policy, which is part of these Terms.'],
+      },
+      {
+        heading: '7. Your content and patient information',
+        body: [
+          'Notes, templates and profile details you enter are stored only on your device (see the Privacy Policy). You retain ownership of your content and are solely responsible for it. Do not enter protected health information into notes or other saved fields, and handle any patient information in compliance with HIPAA and other applicable law.',
+        ],
+      },
+      {
+        heading: '8. Feedback',
+        body: [`If you send us suggestions or feedback, you grant ${L.company} a perpetual, irrevocable, royalty-free right to use them for any purpose without obligation to you.`],
+      },
+      {
+        heading: '9. Third-party sources',
+        body: ['The Service refers to third-party guidelines, products and publications. We are not responsible for third-party content, products or services.'],
+      },
+      {
+        heading: '10. Changes',
+        body: [
+          'We may modify, suspend or discontinue any part of the Service at any time. We may update the Agreement; the updated version will show a new effective date. If changes are material, we will ask you to accept them before you continue. Continued use after an update means you accept it.',
+        ],
+      },
+      {
+        heading: '11. Disclaimer of warranties',
+        body: [
+          `TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SERVICE AND ALL CONTENT ARE PROVIDED “AS IS” AND “AS AVAILABLE”, WITHOUT WARRANTIES OF ANY KIND, EXPRESS, IMPLIED OR STATUTORY, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY AND COMPLETENESS. ${L.company.toUpperCase()} DOES NOT WARRANT THAT THE SERVICE WILL BE UNINTERRUPTED OR ERROR-FREE, THAT ANY CALCULATION, DOSE, CODE OR RECOMMENDATION IS CORRECT OR APPROPRIATE FOR ANY PATIENT, OR THAT CONTENT IS CURRENT.`,
+        ],
+      },
+      {
+        heading: '12. Limitation of liability',
+        body: [
+          `TO THE MAXIMUM EXTENT PERMITTED BY LAW, ${L.company.toUpperCase()} AND ITS MEMBERS, MANAGERS, EMPLOYEES, CONTRACTORS, AGENTS, LICENSORS AND CONTENT CONTRIBUTORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE DAMAGES, OR FOR ANY PERSONAL INJURY, PATIENT HARM, PROFESSIONAL LIABILITY OR MALPRACTICE CLAIM, REGULATORY OR LICENSING ACTION, LOSS OF PROFITS, REVENUE, DATA OR GOODWILL, ARISING OUT OF OR RELATING TO THE SERVICE, ITS CONTENT, OR ANY CLINICAL DECISION MADE USING IT, WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY OR OTHERWISE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.`,
+          `OUR TOTAL LIABILITY FOR ALL CLAIMS RELATING TO THE SERVICE WILL NOT EXCEED THE GREATER OF (A) THE AMOUNTS YOU PAID TO ${L.company.toUpperCase()} FOR THE SERVICE IN THE 12 MONTHS BEFORE THE EVENT GIVING RISE TO THE CLAIM, OR (B) ONE HUNDRED U.S. DOLLARS (US $100).`,
+          'Some jurisdictions do not allow certain exclusions or limitations, so some of the above may not apply to you; in that case they apply to the fullest extent permitted.',
+        ],
+      },
+      {
+        heading: '13. Indemnification',
+        body: [
+          `You agree to defend, indemnify and hold harmless ${L.company} and its members, managers, employees, contractors, agents and licensors from any claims, liabilities, damages, losses and expenses (including reasonable attorneys’ fees) arising from or related to: (a) your use of the Service; (b) your clinical decisions, patient care, prescriptions, notes or laboratory prescriptions; (c) claims by your patients or third parties; (d) your content; or (e) your violation of the Agreement or any law or the rights of any third party.`,
+        ],
+      },
+      {
+        heading: '14. Termination',
+        body: [
+          'We may suspend or terminate your access at any time, including for violation of the Agreement. You may stop using the Service at any time. Sections 5, 7, 8 and 11–17 survive termination.',
+        ],
+      },
+      {
+        heading: '15. Dispute resolution; arbitration; class action waiver',
+        body: [
+          `Informal resolution. Before filing a claim, you agree to contact us at ${L.contactEmail} and try to resolve the dispute informally for 30 days.`,
+          `Binding arbitration. Any dispute arising out of or relating to the Agreement or the Service will be resolved by final, binding arbitration on an individual basis, administered by the American Arbitration Association under its applicable rules, held in ${L.venue} or by video conference. Either party may instead bring an individual claim in small claims court, and either party may seek injunctive relief in court for infringement or misuse of intellectual property.`,
+          'Class action and jury trial waiver. YOU AND WE EACH WAIVE THE RIGHT TO A JURY TRIAL AND TO PARTICIPATE IN ANY CLASS, COLLECTIVE OR REPRESENTATIVE ACTION. Disputes may be brought only in an individual capacity.',
+          `Opt-out. You may opt out of this arbitration agreement by emailing ${L.contactEmail} within 30 days of first accepting these Terms, stating your name and that you opt out.`,
+          `If this Section is found unenforceable, disputes will be brought exclusively in the state or federal courts located in ${L.venue}, and you consent to their personal jurisdiction.`,
+        ],
+      },
+      {
+        heading: '16. Governing law',
+        body: [`The Agreement is governed by the laws of ${L.governingState} and applicable U.S. federal law, without regard to conflict-of-law rules.`],
+      },
+      {
+        heading: '17. General',
+        body: [
+          'The Agreement is the entire agreement between you and us about the Service. If any provision is unenforceable, the rest remains in effect. Our failure to enforce a provision is not a waiver. You may not assign the Agreement; we may assign it in connection with a merger, acquisition or sale of assets. We are not liable for delays or failures caused by events beyond our reasonable control. Your electronic acceptance is your signature and has the same effect as a written signature.',
+        ],
+      },
+      {
+        heading: '18. Contact',
+        body: [`${L.company}, ${L.mailingAddress}. Email: ${L.contactEmail}.`],
+      },
+    ],
+  },
+  {
+    id: 'aup',
+    title: 'Acceptable Use Policy',
+    short: 'Acceptable use',
+    intro: `This Acceptable Use Policy is part of the Terms of Service and explains how you may and may not use ${L.product}.`,
+    sections: [
+      {
+        heading: '1. You agree to',
+        body: [
+          [
+            'Use the Service only for education and as one reference among many, verifying all content independently before any clinical use.',
+            'Prescribe, diagnose and treat only within the scope of your license and the laws of your jurisdiction. You are solely responsible for any prescription you sign, including DEA and state requirements and prescription drug monitoring program checks.',
+            'If you are a student, use the Service only under faculty supervision and your institution’s policies.',
+            'Protect patient privacy: do not enter protected health information into notes or other saved fields; enter only the minimum necessary information in forms; clear forms, clipboard contents and printouts after use; and comply with HIPAA and state privacy laws.',
+            'Keep your device and browser secure, especially on shared computers.',
+          ],
+        ],
+      },
+      {
+        heading: '2. You agree not to',
+        body: [
+          [
+            'Rely on the Service as the sole basis for any diagnosis or treatment, or use it in an emergency.',
+            `Present the Service’s output to patients as personalized advice from ${L.company}, or state or imply that ${L.company} endorses you, your practice or your services.`,
+            'Copy, scrape, reproduce, republish, distribute, sell, rent, sublicense, frame or create derivative works from the Service or its content, except as allowed by law or with our written permission.',
+            'Remove or alter any copyright, trademark or other proprietary notice.',
+            'Reverse engineer, decompile or disassemble the Service, except to the extent applicable law expressly permits despite this restriction.',
+            'Use the Service or its content to train, fine-tune or evaluate artificial intelligence or machine-learning models without our written permission.',
+            'Use automated means (bots, scrapers, crawlers) to access the Service.',
+            'Introduce malware, interfere with or overload the Service, or circumvent any security or access control.',
+            'Use the Service to violate any law or regulation, infringe anyone’s rights, or harm any person.',
+          ],
+        ],
+      },
+      {
+        heading: '3. Enforcement',
+        body: [`We may investigate violations and suspend or terminate access without notice. Report misuse to ${L.contactEmail}.`],
+      },
+    ],
+  },
+  {
+    id: 'privacy',
+    title: 'Privacy Policy',
+    short: 'Privacy',
+    intro: `This Privacy Policy explains how ${L.company} handles information in ${L.product}. In short: the Service runs in your web browser, does not require an account, and does not send the information you type to ${L.company}.`,
+    sections: [
+      {
+        heading: '1. Information saved on your device',
+        body: [
+          'To remember your preferences, the Service saves the following in your browser’s local storage on the device you are using:',
+          [
+            'Timer sound setting, favorite (pinned) procedures and the active tooth number.',
+            'Your personal “chairside pearls” notes for each procedure.',
+            'Laboratory prescription profile: prescriber name, license number, practice, phone and laboratory name.',
+            'Laboratory templates: material, shade, design and enclosure preferences (no patient information).',
+            'Prescription writer prescriber details: name, credentials, license number, NPI, practice, address and phone.',
+            'A record of which version of these policies you accepted, and when.',
+          ],
+          `This information stays on your device. ${L.company} cannot see, access or recover it.`,
+        ],
+      },
+      {
+        heading: '2. Patient information is not saved',
+        body: [
+          'Patient details you type into SOAP notes, laboratory prescriptions or the prescription writer (for example a patient name, date of birth or chart number) are held only in your browser’s memory while the page is open. They are discarded when you reload or close the page, are not saved, and are not sent to us.',
+          'When you copy or print, the content goes to your device’s clipboard or printer, which are under your control.',
+          'Do not include patient identifiers in your chairside pearls notes, which are saved on your device.',
+        ],
+      },
+      {
+        heading: '3. Information we collect',
+        body: [
+          'The Service does not use cookies, analytics, advertising or tracking technologies, and does not collect personal information through the application.',
+          'Like any website, the server that delivers the application’s files may automatically record standard technical information — such as IP address, browser type and the date and time of the request — in server logs, for security and operations. These logs are kept only as long as needed for those purposes.',
+          'If we add features that collect information, such as accounts, cloud sync, analytics or contact forms, we will update this policy before doing so.',
+        ],
+      },
+      {
+        heading: '4. HIPAA',
+        body: [
+          `Because the Service does not receive, store or transmit patient information on ${L.company}’s systems, ${L.company} does not act as a HIPAA covered entity or business associate for your use of the Service. You are responsible for safeguarding any patient information on your devices, including clipboard contents, printouts and shared computers.`,
+        ],
+      },
+      {
+        heading: '5. Your choices',
+        body: [
+          'You can delete everything the Service has saved on this device at any time with “Clear saved data on this device” below, or by clearing this site’s data in your browser settings. A private or incognito window prevents data from being saved after you close it.',
+        ],
+      },
+      {
+        heading: '6. Selling and sharing',
+        body: [
+          `${L.company} does not sell or share personal information, including for cross-context behavioral advertising, and does not process sensitive personal information through the Service. Because we do not hold the information described above, requests to access or delete it can be fulfilled directly on your device as described in Section 5. You may contact us with any privacy request or question.`,
+        ],
+      },
+      {
+        heading: '7. Children',
+        body: ['The Service is intended for adult professionals and students and is not directed to children under 16. We do not knowingly collect information from children.'],
+      },
+      {
+        heading: '8. Security',
+        body: [
+          'Browser local storage is not encrypted, and anyone with access to your device or browser profile can read it. Use a device passcode, keep your browser up to date, and avoid saving details on shared computers.',
+        ],
+      },
+      {
+        heading: '9. International users',
+        body: ['The Service is operated from the United States. If you use it from elsewhere, information stays on your device as described above.'],
+      },
+      {
+        heading: '10. Changes',
+        body: ['We will post any changes to this policy here with a new effective date, and ask you to accept material changes.'],
+      },
+      {
+        heading: '11. Contact',
+        body: [`${L.company}, ${L.mailingAddress}. Email: ${L.contactEmail}.`],
+      },
+    ],
+  },
+];
+
+const LEGAL_DOC_BY_ID = Object.fromEntries(LEGAL_DOCS.map((d) => [d.id, d])) as Record<LegalDocId, LegalDoc>;
+
+function legalDocText(doc: LegalDoc): string {
+  const out: string[] = [doc.title.toUpperCase(), `${L.product} — ${L.company}`, `Effective ${L.effectiveDate} (version ${L.version})`, '', doc.intro];
+  for (const s of doc.sections) {
+    out.push('', s.heading);
+    for (const b of s.body) {
+      if (Array.isArray(b)) b.forEach((x) => out.push(`  • ${x}`));
+      else out.push(b);
+    }
+  }
+  out.push('', copyrightLine());
+  return out.join('\n');
+}
+
+/* --------------------------- Acceptance record -------------------------- */
+
+const LEGAL_ACCEPT_KEY = 'legal.acceptance';
+
+interface LegalAcceptance {
+  version: string;
+  acceptedAt: string;
+}
+
+function hasAcceptedLegal(): boolean {
+  return readStorage<LegalAcceptance | null>(LEGAL_ACCEPT_KEY, null)?.version === LEGAL.version;
+}
+
+function recordLegalAcceptance(): void {
+  writeStorage<LegalAcceptance>(LEGAL_ACCEPT_KEY, { version: LEGAL.version, acceptedAt: new Date().toISOString() });
+}
+
+/** Removes everything this app saved in the browser (all "chairside." keys). */
+function clearSavedData(): number {
+  let removed = 0;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(STORAGE_PREFIX)) keys.push(k);
+    }
+    keys.forEach((k) => window.localStorage.removeItem(k));
+    removed = keys.length;
+  } catch {
+    /* storage unavailable */
+  }
+  return removed;
+}
+
+/* ------------------------------- Viewer --------------------------------- */
+
+function LegalDocView({ doc, compact = false }: { doc: LegalDoc; compact?: boolean }) {
+  return (
+    <article className="text-stone-900">
+      {!compact && <h3 className="text-xl font-bold tracking-tight">{doc.title}</h3>}
+      <p className="mt-1 text-xs font-semibold text-stone-700">
+        Effective {L.effectiveDate} · version {L.version}
+      </p>
+      <p className="mt-3 text-sm leading-relaxed text-stone-800">{doc.intro}</p>
+      {doc.sections.map((s) => (
+        <section key={s.heading} className="mt-5">
+          <h4 className="text-sm font-bold text-stone-900">{s.heading}</h4>
+          {s.body.map((b, i) =>
+            Array.isArray(b) ? (
+              <ul key={i} className="mt-2 space-y-1.5 pl-1">
+                {b.map((x) => (
+                  <li key={x} className="flex gap-2 text-sm leading-relaxed text-stone-800">
+                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-700" aria-hidden />
+                    {x}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p key={i} className="mt-2 text-sm leading-relaxed text-stone-800">
+                {b}
+              </p>
+            ),
+          )}
+        </section>
+      ))}
+      <p className="mt-6 border-t border-stone-300 pt-3 text-xs font-medium text-stone-700">{copyrightLine()}</p>
+    </article>
+  );
+}
+
+function LegalCenter({ docId, onDoc }: { docId: LegalDocId; onDoc: (d: LegalDocId) => void }) {
+  const doc = LEGAL_DOC_BY_ID[docId];
+  const [printBlocked, setPrintBlocked] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [cleared, setCleared] = useState<number | null>(null);
+  return (
+    <div className="space-y-5">
+      <Segmented<LegalDocId>
+        label="Legal document"
+        value={docId}
+        onChange={(d) => {
+          onDoc(d);
+          setConfirmClear(false);
+        }}
+        options={LEGAL_DOCS.map((d) => ({ value: d.id, label: d.short }))}
+      />
+      <div className="flex flex-wrap gap-2">
+        <CopyButton text={legalDocText(doc)} label="Copy text" className="border border-stone-400 bg-white text-stone-900" />
+        {printAvailable() && (
+          <button type="button" onClick={() => setPrintBlocked(!printLabScript(legalDocText(doc), `${doc.title} — ${L.company}`))} className={cx(T.btnOutline, 'h-8 text-xs', T.focus)}>
+            <Printer className="h-3.5 w-3.5" aria-hidden />
+            Print
+          </button>
+        )}
+      </div>
+      {printBlocked && <p className="text-xs font-medium text-rose-800">The print window was blocked — allow pop-ups or use Copy text.</p>}
+      <div className={cx(T.card, 'p-5')}>
+        <LegalDocView doc={doc} />
+      </div>
+      {docId === 'privacy' && (
+        <div className="rounded-2xl border border-rose-300 bg-rose-50 p-4">
+          <p className="text-sm font-bold text-rose-950">Clear saved data on this device</p>
+          <p className="mt-1 text-sm text-rose-950">
+            Removes favorites, chairside pearls, lab and prescriber profiles, lab templates, settings and your policy acceptance from this browser. This cannot be undone.
+          </p>
+          {cleared !== null ? (
+            <p className="mt-3 text-sm font-semibold text-rose-950" role="status">
+              Cleared {cleared} saved item{cleared === 1 ? '' : 's'}. Reloading…
+            </p>
+          ) : confirmClear ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCleared(clearSavedData());
+                  window.setTimeout(() => window.location.reload(), 900);
+                }}
+                className={cx('inline-flex h-9 items-center gap-1.5 rounded-xl bg-rose-800 px-3 text-sm font-semibold text-white hover:bg-rose-900', T.focus)}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+                Yes, clear everything
+              </button>
+              <button type="button" onClick={() => setConfirmClear(false)} className={cx(T.btnOutline, 'h-9', T.focus)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setConfirmClear(true)} className={cx('mt-3 inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-800 bg-white px-3 text-sm font-semibold text-rose-900 hover:bg-rose-100', T.focus)}>
+              <Trash2 className="h-4 w-4" aria-hidden />
+              Clear saved data on this device
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------- Footer --------------------------------- */
+
+function LegalFooter({ onOpen }: { onOpen: (d: LegalDocId) => void }) {
+  return (
+    <footer className="relative border-t border-stone-300 bg-white px-4 pb-32 pt-8 lg:px-8" aria-label="Legal">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <div className="flex gap-3 rounded-2xl border border-amber-400 bg-amber-50 p-4">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-800" aria-hidden />
+          <p className="text-sm leading-relaxed text-amber-950">
+            <strong className="font-bold">For dental education only.</strong> {L.product} is an educational reference for dental professionals, students and educators. It does not provide
+            diagnoses, treatment recommendations or medical advice, is not a medical device, and is not a substitute for professional judgment. Verify all content — including drug doses —
+            against current labeling, guidelines and the patient’s history before any clinical use. In an emergency, call 911.
+          </p>
+        </div>
+        <nav aria-label="Legal documents" className="flex flex-wrap gap-x-1 gap-y-1">
+          {LEGAL_DOCS.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => onOpen(d.id)}
+              className={cx('rounded-lg px-2 py-1 text-sm font-semibold text-stone-900 underline decoration-stone-400 underline-offset-4 hover:bg-stone-100 hover:decoration-amber-700', T.focus)}
+            >
+              {d.title}
+            </button>
+          ))}
+        </nav>
+        <div className="space-y-1 text-xs leading-relaxed text-stone-700">
+          <p className="font-semibold text-stone-900">{copyrightLine()}</p>
+          <p>
+            {L.product} and its software, content, protocols, diagrams and templates are protected by copyright and other intellectual-property laws. No part may be copied, redistributed or
+            used to train AI models without written permission.
+          </p>
+          <p>Product, material and manufacturer names are trademarks of their respective owners, used for identification only; no affiliation or endorsement is implied.</p>
+          <p>
+            Policies effective {L.effectiveDate} · version {L.version}
+          </p>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+/* ---------------------------- Acceptance gate --------------------------- */
+
+function LegalGate({ onAccept }: { onAccept: () => void }) {
+  const [agreed, setAgreed] = useState(false);
+  const [viewing, setViewing] = useState<LegalDocId | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const checkRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.legalGate = '1';
+    const t = window.setTimeout(() => checkRef.current?.focus(), 30);
+    return () => {
+      window.clearTimeout(t);
+      delete document.documentElement.dataset.legalGate;
+    };
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !boxRef.current) return;
+    const nodes = Array.from(boxRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null);
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const doc = viewing ? LEGAL_DOC_BY_ID[viewing] : null;
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-900 bg-opacity-70 p-3 sm:p-6">
+      <div
+        ref={boxRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="legal-gate-title"
+        onKeyDown={onKeyDown}
+        className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-stone-300 bg-white shadow-2xl"
+      >
+        <div className="flex items-start gap-3 border-b border-stone-300 px-5 py-4">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-700 text-white">
+            <ShieldCheck className="h-5 w-5" aria-hidden />
+          </span>
+          <div>
+            <h2 id="legal-gate-title" className="text-lg font-bold text-stone-900">
+              {doc ? doc.title : `Welcome to ${L.product}`}
+            </h2>
+            <p className="text-xs font-medium text-stone-700">{doc ? `Effective ${L.effectiveDate}` : `An educational reference by ${L.company}`}</p>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {doc ? (
+            <LegalDocView doc={doc} compact />
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-stone-900">Before you continue, please confirm you understand:</p>
+              <ul className="mt-3 space-y-2.5">
+                {[
+                  'This app is for dental education and reference only. It does not diagnose, treat or give medical or dental advice, and it is not a medical device.',
+                  'You are responsible for every clinical decision. Verify all content — protocols, drug doses, codes and templates — against current labeling, guidelines, the patient’s history and your local laws.',
+                  'Do not enter protected health information into notes. Patient details in forms are not saved; your preferences are stored only in this browser.',
+                  'Not for emergencies — call 911.',
+                ].map((x) => (
+                  <li key={x} className="flex gap-2.5 text-sm leading-relaxed text-stone-800">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+                    {x}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-sm text-stone-800">Read the full documents:</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {LEGAL_DOCS.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => setViewing(d.id)}
+                    className={cx('rounded-lg border border-stone-400 bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-900 hover:border-amber-700 hover:bg-amber-50', T.focus)}
+                  >
+                    {d.title}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="space-y-3 border-t border-stone-300 bg-stone-50 px-5 py-4">
+          {doc ? (
+            <button type="button" onClick={() => setViewing(null)} className={cx(T.btnOutline, 'h-10', T.focus)}>
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+              Back
+            </button>
+          ) : (
+            <>
+              <label className="flex items-start gap-3 text-sm leading-snug text-stone-900">
+                <input ref={checkRef} type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-amber-700" />
+                <span>
+                  I am at least 18 and a dental professional, dental student or resident, or educator. I have read and agree to the Terms of Service (including binding arbitration and
+                  the class action waiver), the Acceptable Use Policy, the Privacy Policy and the Educational Use &amp; Medical Disclaimer.
+                </span>
+              </label>
+              <button
+                type="button"
+                disabled={!agreed}
+                onClick={() => {
+                  recordLegalAcceptance();
+                  onAccept();
+                }}
+                className={cx(T.btnPrimary, 'h-11 w-full', T.focus)}
+              >
+                Agree and continue
+              </button>
+              <p className="text-center text-[11px] text-stone-700">{copyrightLine()}</p>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ========================================================================== */
 /* 9. APP SHELL                                                               */
 /* ========================================================================== */
 
-type ToolId = 'odontogram' | 'dose' | 'cement' | 'endo' | 'medical' | 'denture';
+type ToolId = 'odontogram' | 'dose' | 'cement' | 'endo' | 'medical' | 'denture' | 'lab' | 'rx';
 
 const TOOLS: { id: ToolId; label: string; short: string; icon: LucideIcon; subtitle: string }[] = [
   { id: 'odontogram', label: 'Tooth chart', short: 'Tooth', icon: LayoutGrid, subtitle: 'Set the active tooth across the workbench' },
@@ -11761,6 +15677,8 @@ const TOOLS: { id: ToolId; label: string; short: string; icon: LucideIcon; subti
   { id: 'endo', label: 'Endodontic diagnosis', short: 'Endo Dx', icon: Zap, subtitle: 'AAE pulpal and apical diagnosis with CDT codes' },
   { id: 'medical', label: 'Medical risk & prophylaxis', short: 'Med risk', icon: HeartPulse, subtitle: 'Vitals triage and AHA/ADA antibiotic prophylaxis' },
   { id: 'denture', label: 'Complete denture tools', short: 'Dentures', icon: Smile, subtitle: 'Border-molding zones and PIP troubleshooting' },
+  { id: 'lab', label: 'Lab prescription', short: 'Lab Rx', icon: FlaskConical, subtitle: 'Guided dental laboratory work authorization' },
+  { id: 'rx', label: 'Prescriptions & pregnancy', short: 'Rx & Preg', icon: Pill, subtitle: 'Prescription writer, common dental Rx and pregnancy/lactation safety' },
 ];
 
 /* ------------------------------- Header --------------------------------- */
@@ -12451,6 +16369,8 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
   const [toothId, setToothId] = useLocalStorage<string | null>('tooth', null);
   const [toothFilter, setToothFilter] = useState(true);
   const [operatoryNonce, setOperatoryNonce] = useState(0);
+  const [legalDoc, setLegalDoc] = useState<LegalDocId | null>(null);
+  const [legalAccepted, setLegalAccepted] = useState(hasAcceptedLegal);
   const searchRef = useRef<HTMLInputElement>(null);
   const [headerRef, headerHeight] = useElementHeight<HTMLElement>();
 
@@ -12482,7 +16402,7 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (document.documentElement.dataset.operatory) return;
+      if (document.documentElement.dataset.operatory || document.documentElement.dataset.legalGate) return;
       const target = e.target as HTMLElement | null;
       const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
       if (e.key === '/' && !typing) {
@@ -12492,6 +16412,7 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
         setSoapOpen(false);
         setIndexOpen(false);
         setTool(null);
+        setLegalDoc(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -12591,6 +16512,8 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
         </main>
       </div>
 
+      <LegalFooter onOpen={(d) => setLegalDoc(d)} />
+
       <UtilityDock onOpen={(t) => setTool(t)} active={tool} operatoryAvailable={!showOverview} onOperatory={() => setOperatoryNonce((n) => n + 1)} />
 
       {/* Mobile index drawer */}
@@ -12627,6 +16550,23 @@ export default function ChairsideProtocolApp({ procedures = proceduresData }: { 
       <Flyout open={tool === 'denture'} onClose={() => setTool(null)} title="Complete denture tools" subtitle={TOOLS[5].subtitle} icon={Smile} width="max-w-3xl">
         <DentureToolsPanel />
       </Flyout>
+      <Flyout open={tool === 'lab'} onClose={() => setTool(null)} title="Lab prescription" subtitle={TOOLS[6].subtitle} icon={FlaskConical} width="max-w-6xl">
+        <LabScriptPanel tooth={tooth} activeProcedureId={showOverview ? null : (active?.id ?? null)} />
+      </Flyout>
+      <Flyout open={tool === 'rx'} onClose={() => setTool(null)} title="Prescriptions & pregnancy" subtitle={TOOLS[7].subtitle} icon={Pill} width="max-w-6xl">
+        <PrescriptionAndPregnancyHub />
+      </Flyout>
+      <Flyout
+        open={legalDoc !== null}
+        onClose={() => setLegalDoc(null)}
+        title={legalDoc ? LEGAL_DOC_BY_ID[legalDoc].title : 'Legal'}
+        subtitle={`${LEGAL.company} · effective ${LEGAL.effectiveDate}`}
+        icon={ShieldCheck}
+        width="max-w-3xl"
+      >
+        {legalDoc && <LegalCenter docId={legalDoc} onDoc={setLegalDoc} />}
+      </Flyout>
+      {!legalAccepted && <LegalGate onAccept={() => setLegalAccepted(true)} />}
       {toolMeta && <span className="sr-only" aria-live="polite">{toolMeta.label} opened</span>}
     </div>
   );
